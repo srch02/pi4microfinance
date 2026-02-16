@@ -1,0 +1,46 @@
+/* Personnalisation du thème */
+.swagger-ui {
+    background-color: #f5f7fa !important;
+  }
+  
+  /* Couleurs des méthodes HTTP */
+  .opblock-get {
+    background-color: #e3f2fd !important;
+  }
+  .opblock-post {
+    background-color: #e8f5e9 !important;
+  }
+  .opblock-put {
+    background-color: #fff8e1 !important;
+  }
+  .opblock-patch {
+    background-color: #f3e5f5 !important;
+  }
+  .opblock-delete {
+    background-color: #ffebee !important;
+  }
+  
+  /* Personnalisation des titres */
+  .swagger-ui .opblock-summary {
+    font-weight: 600 !important;
+    color: #1a237e !important;
+  }
+  
+  /* Personnalisation des boutons */
+  .swagger-ui .btn {
+    border-radius: 8px !important;
+    padding: 8px 16px !important;
+  }
+  
+  /* Personnalisation des en-têtes */
+  .swagger-ui .info__title {
+    color: #1a237e !important;
+    font-size: 2rem !important;
+    text-align: center !important;
+  }
+  
+  /* Personnalisation des sections */
+  .swagger-ui .section-title {
+    background-color: #e3f2fd !important;
+    border-left: 4px solid #1a237e !important;
+  }
