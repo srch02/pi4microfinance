@@ -3,6 +3,8 @@ package pi.db.piversionbd.entities.health;
 import jakarta.persistence.*;
 import lombok.Data;
 
+import java.util.List;
+
 @Entity
 @Table(name = "MEDICATIONS")
 @Data
@@ -27,5 +29,12 @@ public class Medication {
 
     @Column(name = "is_covered")
     private Boolean covered;
+
+    @ManyToMany(mappedBy = "medications")
+    private List<Consultation> consultations;
+
+    @OneToMany(mappedBy = "medication")
+    private List<PharmacyRecommendation> pharmacyRecommendations;
+
 }
 

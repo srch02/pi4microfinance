@@ -84,5 +84,7 @@ public class Member {
 
     @OneToMany(mappedBy = "creator")
     private List<Group> createdGroups;
+
+
 }
 

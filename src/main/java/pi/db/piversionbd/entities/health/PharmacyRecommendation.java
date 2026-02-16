@@ -17,8 +17,9 @@ public class PharmacyRecommendation {
     @JoinColumn(name = "member_id")
     private Member member;
 
-    @Column(name = "product_name")
-    private String productName;
+    @ManyToOne
+    @JoinColumn(name = "medication_id")
+    private Medication medication;
 
     private String category;
     private Float price;
@@ -28,5 +29,7 @@ public class PharmacyRecommendation {
 
     @Column(name = "eligibility_status")
     private String eligibilityStatus;
+
+    private Boolean purchased;
 }
 

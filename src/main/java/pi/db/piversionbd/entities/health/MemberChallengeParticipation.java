@@ -7,9 +7,9 @@ import pi.db.piversionbd.entities.groups.Member;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "HEALTH_TRACKING")
+@Table(name = "MEMBER_CHALLENGE_PARTICIPATION")
 @Data
-public class HealthTrackingEntry {
+public class MemberChallengeParticipation {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -19,12 +19,16 @@ public class HealthTrackingEntry {
     @JoinColumn(name = "member_id")
     private Member member;
 
-    @Column(name = "metric_type")
-    private  HealthMetricType metricType;
+    @ManyToOne
+    @JoinColumn(name = "challenge_id")
+    private HealthChallenge challenge;
 
-    private Float value;
+    private LocalDateTime joinedAt;
 
-    @Column(name = "recorded_at")
-    private LocalDateTime recordedAt;
+    private Boolean completed;
+
+    private Integer progressPercentage;
+
+    private Integer pointsEarned;
 }
 

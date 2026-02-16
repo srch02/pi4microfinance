@@ -15,7 +15,7 @@ public class Doctor {
     private Long id;
 
     private String name;
-    private String specialty;
+    private Specialty specialty;
     private Float rating;
 
     @Column(name = "accepts_telemedicine")
