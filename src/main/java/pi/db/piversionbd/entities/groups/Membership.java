@@ -20,8 +20,8 @@ public class Membership {
     @JoinColumn(name = "group_id")
     private Group group;
 
-    @Column(name = "package_type")
-    private String packageType;
+    @Column(name = "packageType")
+    private String  packageType;
 
     @Column(name = "monthly_amount")
     private Float monthlyAmount;
@@ -31,5 +31,9 @@ public class Membership {
 
     @Column(name = "annual_limit")
     private Float annualLimit;
+
+    @Column(nullable = false)
+    private Boolean active = true;
+
 }
 

@@ -34,6 +34,14 @@ public class PharmacyRecommendationController {
     public void delete(@PathVariable Long id) {
         service.delete(id);
     }
+    @GetMapping("/discount/{memberId}/{price}")
+    public double getDiscountedPrice(
+            @PathVariable Long memberId,
+            @PathVariable double price) {
+
+        return service
+                .calculateDiscountedPrice(memberId, price);
+    }
 }
 
 

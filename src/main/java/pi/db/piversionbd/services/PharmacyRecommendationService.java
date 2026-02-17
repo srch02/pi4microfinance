@@ -13,5 +13,6 @@ public interface PharmacyRecommendationService {
     PharmacyRecommendation update(Long id, PharmacyRecommendation recommendation);
 
     void delete(Long id);
+    double calculateDiscountedPrice(Long memberId, double originalPrice);
 }
 
