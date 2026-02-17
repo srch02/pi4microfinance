@@ -3,15 +3,20 @@ package pi.db.piversionbd.service;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import pi.db.piversionbd.controller.PreRegistrationRequestDTO;
 import pi.db.piversionbd.controller.PreRegistrationResponseDTO;
 import pi.db.piversionbd.controller.PreRegistrationSummaryDTO;
 import pi.db.piversionbd.controller.PreRegistrationException;
 import pi.db.piversionbd.entities.admin.AdminReviewQueueItem;
 import pi.db.piversionbd.entities.groups.Member;
+import pi.db.piversionbd.entities.groups.PackageType;
 import pi.db.piversionbd.entities.pre.*;
 import pi.db.piversionbd.repository.*;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -24,11 +29,8 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class PreRegistrationServiceImpl implements IPreRegistrationService {
 
-    private static final String STATUS_PENDING_REVIEW = "PENDING_REVIEW";
-    private static final String STATUS_APPROVED = "APPROVED";
-    private static final String STATUS_REJECTED = "REJECTED";
-    private static final String STATUS_ACTIVATED = "ACTIVATED";
-    private static final float BASE_MONTHLY_PRICE = 50.0f;
+    private static final float BASE_MONTHLY_PRICE = 25.0f;
+    private static final float MAX_MONTHLY_PRICE = 70.0f;
 
     private final PreRegistrationRepository preRegistrationRepository;
     private final BlacklistRepository blacklistRepository;
@@ -68,15 +70,18 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
                 "Sorry, your medical condition requires premium insurance that we cannot provide.");
         }
 
-        // Step 4: Risk coefficient and personalized price
-        float riskCoefficient = calculateRiskCoefficient(requestDTO);
+        // Step 4: Fraud detection & risk coefficient and personalized price
+        float fraudScore = detectFraudScore(requestDTO, declaration);
+        boolean hasChronicIllness = hasChronicIllness(declaration);
+        float riskCoefficient = calculateRiskCoefficient(requestDTO, declaration);
         float calculatedPrice = Math.round(BASE_MONTHLY_PRICE * riskCoefficient * 100f) / 100f;
+        calculatedPrice = Math.min(MAX_MONTHLY_PRICE, calculatedPrice);
 
         // Persist: PreRegistration, MedicalHistory, RiskAssessment, AdminReviewQueueItem
         PreRegistration pre = new PreRegistration();
         pre.setCinNumber(cin);
-        pre.setStatus(STATUS_PENDING_REVIEW);
-        pre.setFraudScore(null);
+        pre.setStatus(PreRegistrationStatus.PENDING_REVIEW);
+        pre.setFraudScore(fraudScore);
         pre.setCreatedAt(LocalDateTime.now());
         pre = preRegistrationRepository.save(pre);
 
@@ -90,7 +95,7 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         risk.setPreRegistration(pre);
         risk.setRiskCoefficient(riskCoefficient);
         risk.setCalculatedPrice(calculatedPrice);
-        risk.setExclusions(null);
+        risk.setExclusions(hasChronicIllness ? "This chronic illness is not covered, but other conditions are." : null);
         riskAssessmentRepository.save(risk);
 
         AdminReviewQueueItem queueItem = new AdminReviewQueueItem();
@@ -99,16 +104,17 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         queueItem.setClaim(null);
         queueItem.setMember(null);
         queueItem.setAssignedTo(null);
-        queueItem.setPriorityScore(0.5f);
+        queueItem.setPriorityScore(computePriorityScore(fraudScore, riskCoefficient));
         adminReviewQueueItemRepository.save(queueItem);
 
         return PreRegistrationResponseDTO.builder()
             .success(true)
             .preRegistrationId(pre.getId())
-            .status(STATUS_PENDING_REVIEW)
+            .status(PreRegistrationStatus.PENDING_REVIEW)
             .message("Application submitted. Admin will review within 2-48h.")
             .calculatedPrice(calculatedPrice)
             .riskCoefficient(riskCoefficient)
+            .exclusionsNote(hasChronicIllness ? "This chronic illness is not covered, but other conditions are." : null)
             .build();
     }
 
@@ -131,10 +137,11 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
     @Transactional
     public PreRegistrationSummaryDTO updatePreRegistration(Long id, PreRegistrationRequestDTO requestDTO) {
         PreRegistration pre = getPreRegistrationById(id);
-        if (STATUS_ACTIVATED.equals(pre.getStatus())) {
+        if (pre.getStatus() == PreRegistrationStatus.ACTIVATED) {
             throw new PreRegistrationException("Cannot update: pre-registration already activated.");
         }
         String declaration = buildMedicalDeclaration(requestDTO);
+        boolean hasChronicIllness = hasChronicIllness(declaration);
         List<MedicalHistory> medicalList = medicalHistoryRepository.findByPreRegistration_Id(pre.getId());
         if (!medicalList.isEmpty()) {
             MedicalHistory m = medicalList.get(0);
@@ -147,20 +154,22 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
             medical.setExcludedConditionDetails(declaration);
             medicalHistoryRepository.save(medical);
         }
-        float riskCoefficient = calculateRiskCoefficient(requestDTO);
+        float riskCoefficient = calculateRiskCoefficient(requestDTO, declaration);
         float calculatedPrice = Math.round(BASE_MONTHLY_PRICE * riskCoefficient * 100f) / 100f;
+        calculatedPrice = Math.min(MAX_MONTHLY_PRICE, calculatedPrice);
         List<RiskAssessment> riskList = riskAssessmentRepository.findByPreRegistration_Id(pre.getId());
         if (!riskList.isEmpty()) {
             RiskAssessment r = riskList.get(0);
             r.setRiskCoefficient(riskCoefficient);
             r.setCalculatedPrice(calculatedPrice);
+            r.setExclusions(hasChronicIllness ? "This chronic illness is not covered, but other conditions are." : null);
             riskAssessmentRepository.save(r);
         } else {
             RiskAssessment risk = new RiskAssessment();
             risk.setPreRegistration(pre);
             risk.setRiskCoefficient(riskCoefficient);
             risk.setCalculatedPrice(calculatedPrice);
-            risk.setExclusions(null);
+            risk.setExclusions(hasChronicIllness ? "This chronic illness is not covered, but other conditions are." : null);
             riskAssessmentRepository.save(risk);
         }
         return toSummary(preRegistrationRepository.save(pre));
@@ -168,9 +177,12 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
 
     @Override
     @Transactional
-    public PreRegistration updatePreRegistrationStatus(Long id, String status) {
+    public PreRegistration updatePreRegistrationStatus(Long id, PreRegistrationStatus status) {
         PreRegistration pre = getPreRegistrationById(id);
-        if (status == null || (!STATUS_APPROVED.equals(status) && !STATUS_REJECTED.equals(status) && !STATUS_PENDING_REVIEW.equals(status))) {
+        if (status == null ||
+            (status != PreRegistrationStatus.APPROVED &&
+                status != PreRegistrationStatus.REJECTED &&
+                status != PreRegistrationStatus.PENDING_REVIEW)) {
             throw new PreRegistrationException("Invalid status. Use APPROVED, REJECTED, or PENDING_REVIEW.");
         }
         pre.setStatus(status);
@@ -181,7 +193,7 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
     @Transactional
     public PreRegistration confirmPayment(Long id, Double paymentAmount) {
         PreRegistration pre = getPreRegistrationById(id);
-        if (!STATUS_APPROVED.equals(pre.getStatus())) {
+        if (pre.getStatus() != PreRegistrationStatus.APPROVED) {
             throw new PreRegistrationException("Pre-registration must be approved before payment. Current status: " + pre.getStatus());
         }
 
@@ -199,7 +211,33 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         member.setPreRegistration(pre);
         member = memberRepository.save(member);
 
-        pre.setStatus(STATUS_ACTIVATED);
+        pre.setStatus(PreRegistrationStatus.ACTIVATED);
+        preRegistrationRepository.save(pre);
+
+        return pre;
+    }
+
+    @Override
+    @Transactional
+    public PreRegistration confirmPaymentByPackage(Long id, PackageType packageType) {
+        PreRegistration pre = getPreRegistrationById(id);
+        if (pre.getStatus() != PreRegistrationStatus.APPROVED) {
+            throw new PreRegistrationException("Pre-registration must be approved before payment. Current status: " + pre.getStatus());
+        }
+
+        Optional<RiskAssessment> latest = riskAssessmentRepository.findByPreRegistration_Id(pre.getId()).stream().findFirst();
+        float basePrice = latest.map(RiskAssessment::getCalculatedPrice).orElse(BASE_MONTHLY_PRICE);
+        float finalPrice = applyPackageMultiplier(basePrice, packageType);
+
+        Member member = new Member();
+        member.setCinNumber(pre.getCinNumber());
+        member.setPersonalizedMonthlyPrice(finalPrice);
+        member.setAdherenceScore(null);
+        member.setCurrentGroup(null);
+        member.setPreRegistration(pre);
+        member = memberRepository.save(member);
+
+        pre.setStatus(PreRegistrationStatus.ACTIVATED);
         preRegistrationRepository.save(pre);
 
         return pre;
@@ -209,7 +247,7 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
     @Transactional
     public void deletePreRegistration(Long id) {
         PreRegistration pre = getPreRegistrationById(id);
-        if (STATUS_ACTIVATED.equals(pre.getStatus())) {
+        if (pre.getStatus() == PreRegistrationStatus.ACTIVATED) {
             throw new PreRegistrationException("Cannot delete: account already activated.");
         }
         adminReviewQueueItemRepository.findByPreRegistration(pre).forEach(adminReviewQueueItemRepository::delete);
@@ -217,6 +255,37 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         medicalHistoryRepository.findByPreRegistration_Id(pre.getId()).forEach(medicalHistoryRepository::delete);
         documentUploadRepository.findByPreRegistration_Id(pre.getId()).forEach(documentUploadRepository::delete);
         preRegistrationRepository.delete(pre);
+    }
+
+    @Override
+    @Transactional
+    public void uploadMedicalHistoryDocument(Long medicalHistoryId, MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new PreRegistrationException("Uploaded file is empty.");
+        }
+        MedicalHistory medicalHistory = medicalHistoryRepository.findById(medicalHistoryId)
+            .orElseThrow(() -> new PreRegistrationException("Medical history not found: " + medicalHistoryId));
+        PreRegistration pre = medicalHistory.getPreRegistration();
+
+        // Save file to disk under uploads/pre-registration/{id}/
+        Path target;
+        try {
+            Path baseDir = Path.of("uploads", "pre-registration", String.valueOf(pre.getId()));
+            Files.createDirectories(baseDir);
+            target = baseDir.resolve(file.getOriginalFilename() != null ? file.getOriginalFilename() : "medical-history-" + System.currentTimeMillis());
+            Files.write(target, file.getBytes());
+        } catch (IOException e) {
+            throw new PreRegistrationException("Failed to store medical history document.", e);
+        }
+
+        // Create a DocumentUpload entry with a neutral fraud score for now
+        DocumentUpload upload = new DocumentUpload();
+        upload.setPreRegistration(pre);
+        upload.setMember(medicalHistory.getMember());
+        upload.setClaim(null);
+        upload.setFraudDetectionScore(0.0f);
+        upload.setFilePath(target.toString());
+        documentUploadRepository.save(upload);
     }
 
     private PreRegistrationSummaryDTO toSummary(PreRegistration pre) {
@@ -256,9 +325,10 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
     }
 
     /**
-     * ML-like risk coefficient: base 1.0 + age (>50) + seasonal illness + family history + profession + financial.
+     * ML-like risk coefficient: base 1.0 + age (>50) + seasonal illness + family history + profession + financial +
+     * declared diseases & treatments.
      */
-    private float calculateRiskCoefficient(PreRegistrationRequestDTO dto) {
+    private float calculateRiskCoefficient(PreRegistrationRequestDTO dto, String declaration) {
         float coef = 1.0f;
 
         if (dto.getAge() != null && dto.getAge() > 50) {
@@ -282,10 +352,112 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         }
 
         if (dto.getFinancialStability() != null) {
-            String fs = dto.getFinancialStability().toLowerCase();
-            if (fs.contains("unstable") || fs.contains("low")) coef += 0.10f;
+            switch (dto.getFinancialStability()) {
+                case INSTABLE -> coef += 0.10f;
+                case STABLE, MODERE -> {
+                    // no extra risk
+                }
+            }
+        }
+
+        // Additional signal from full medical text
+        String allText = (declaration == null ? "" : declaration.toLowerCase());
+
+        // Chronic but not auto-reject
+        if (allText.contains("hypertension") || allText.contains("high blood pressure")) {
+            coef += 0.25f;
+        }
+        if (allText.contains("asthma")) {
+            coef += 0.15f;
+        }
+
+        // Heavy medications
+        if (allText.contains("anticoagulant") || allText.contains("blood thinner")) {
+            coef += 0.30f;
+        }
+
+        // Strong family history of serious disease
+        if (allText.contains("family") && allText.contains("cancer")) {
+            coef += 0.30f;
+        }
+
+        // Diabetes or other chronic illness → +25% contribution
+        if (hasChronicIllness(allText)) {
+            coef *= 1.25f;
         }
 
         return Math.max(1.0f, Math.min(coef, 3.0f));
+    }
+
+    /** Simple heuristic fraud score based on declaration consistency & risk signals. */
+    private float detectFraudScore(PreRegistrationRequestDTO dto, String declaration) {
+        float score = 0.0f;
+        String text = declaration == null ? "" : declaration.toLowerCase();
+
+        // Suspicious: declares very serious disease in basic product
+        if (text.contains("terminal") || text.contains("stage 4") || text.contains("dialysis")) {
+            score += 0.6f;
+        }
+        if (text.contains("heart attack") || text.contains("stroke")) {
+            score += 0.4f;
+        }
+
+        // Self-contradiction: "no chronic disease" but chronic meds
+        if (text.contains("no chronic") &&
+            (text.contains("insulin") || text.contains("chemotherapy") || text.contains("radiotherapy"))) {
+            score += 0.5f;
+        }
+
+        // Age + heavy profession + empty history → slightly suspicious
+        if (dto.getAge() != null && dto.getAge() > 55 &&
+            dto.getProfession() != null &&
+            dto.getProfession().toLowerCase().contains("construction") &&
+            (dto.getMedicalDeclarationText() == null || dto.getMedicalDeclarationText().isBlank())) {
+            score += 0.3f;
+        }
+
+        // Many blank answers
+        int emptyCount = 0;
+        if (isBlank(dto.getCurrentConditions())) emptyCount++;
+        if (isBlank(dto.getFamilyHistory())) emptyCount++;
+        if (isBlank(dto.getOngoingTreatments())) emptyCount++;
+        if (isBlank(dto.getConsultationFrequency())) emptyCount++;
+        if (emptyCount >= 3) {
+            score += 0.2f;
+        }
+
+        return Math.max(0f, Math.min(score, 1f));
+    }
+
+    private boolean isBlank(String s) {
+        return s == null || s.isBlank();
+    }
+
+    /** Detects diabetes or other chronic illness mentions in the medical declaration text. */
+    private boolean hasChronicIllness(String declaration) {
+        if (declaration == null || declaration.isBlank()) {
+            return false;
+        }
+        String lower = declaration.toLowerCase();
+        return lower.contains("diabet") || lower.contains("chronic");
+    }
+
+    /** Combine fraud score and risk coefficient into an admin priority score (0..1). */
+    private float computePriorityScore(float fraudScore, float riskCoefficient) {
+        float normRisk = Math.max(0f, Math.min((riskCoefficient - 1f) / 2f, 1f)); // risk 1..3 → 0..1
+        float score = 0.7f * fraudScore + 0.3f * normRisk;
+        return Math.max(0f, Math.min(score, 1f));
+    }
+
+    private float applyPackageMultiplier(float basePrice, PackageType packageType) {
+        if (packageType == null) {
+            return basePrice;
+        }
+        float raw = switch (packageType) {
+            case CONFORT -> basePrice * 1.3f;
+            case PREMIUM -> basePrice * 1.6f;
+            case BASIC -> basePrice;
+        };
+        return Math.min(MAX_MONTHLY_PRICE, raw);
     }
 }

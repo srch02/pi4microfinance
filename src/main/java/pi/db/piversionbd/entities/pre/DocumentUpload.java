@@ -28,5 +28,9 @@ public class DocumentUpload {
 
     @Column(name = "fraud_detection_score")
     private Float fraudDetectionScore;
+
+    // Optional: store file path on disk for reference / download
+    @Column(name = "file_path")
+    private String filePath;
 }
 

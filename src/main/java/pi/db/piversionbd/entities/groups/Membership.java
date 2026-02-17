@@ -20,8 +20,9 @@ public class Membership {
     @JoinColumn(name = "group_id")
     private Group group;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "package_type")
-    private String packageType;
+    private PackageType packageType;
 
     @Column(name = "monthly_amount")
     private Float monthlyAmount;

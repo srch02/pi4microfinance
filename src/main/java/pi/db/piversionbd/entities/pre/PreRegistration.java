@@ -20,8 +20,9 @@ public class PreRegistration {
     @Column(name = "cin_number", nullable = false)
     private String cinNumber;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private String status;
+    private PreRegistrationStatus status;
 
     @Column(name = "fraud_score")
     private Float fraudScore;
