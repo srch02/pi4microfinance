@@ -35,10 +35,4 @@ public class ClaimScoringController {
     ) {
         return ResponseEntity.ok(claimScoringService.upsertByClaimId(claimId, request));
     }
-
-    @DeleteMapping("/by-claim/{claimId}")
-    public ResponseEntity<Void> deleteByClaimId(@PathVariable Long claimId) {
-        claimScoringService.deleteByClaimId(claimId);
-        return ResponseEntity.noContent().build();
-    }
 }

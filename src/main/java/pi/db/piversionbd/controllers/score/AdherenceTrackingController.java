@@ -37,27 +37,33 @@ public class AdherenceTrackingController {
      * GET /api/adherence-tracking?claimId=10
      */
     @GetMapping
-    public ResponseEntity<Page<AdherenceTracking>> getByMemberOrClaim(
+    public ResponseEntity<org.springframework.data.domain.Page<pi.db.piversionbd.dto.AdherenceResponse>> getByMemberOrClaim(
             @RequestParam(required = false) Long memberId,
             @RequestParam(required = false) Long claimId,
             @PageableDefault(size = 10, sort = "createdAt") Pageable pageable
     ) {
         if (memberId != null) {
-            return ResponseEntity.ok(adherenceTrackingService.getByMember(memberId, pageable));
+            return ResponseEntity.ok(
+                    adherenceTrackingService.getByMember(memberId, pageable)
+                            .map(adherenceTrackingService::toResponse)
+            );
         }
         if (claimId != null) {
-            return ResponseEntity.ok(adherenceTrackingService.getByClaim(claimId, pageable));
+            return ResponseEntity.ok(
+                    adherenceTrackingService.getByClaim(claimId, pageable)
+                            .map(adherenceTrackingService::toResponse)
+            );
         }
-
         throw new IllegalArgumentException("Fournissez memberId ou claimId.");
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<AdherenceTracking> update(
+    public ResponseEntity<pi.db.piversionbd.dto.AdherenceResponse> update(
             @PathVariable Long id,
             @RequestBody AdherenceTracking request
     ) {
-        return ResponseEntity.ok(adherenceTrackingService.update(id, request));
+        AdherenceTracking updated = adherenceTrackingService.update(id, request);
+        return ResponseEntity.ok(adherenceTrackingService.toResponse(updated));
     }
 
     @DeleteMapping("/{id}")

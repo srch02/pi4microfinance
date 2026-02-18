@@ -36,41 +36,41 @@ public class ClaimController {
     }
 
     @GetMapping("/{id}/details")
-    public ResponseEntity<Claim> getDetailsById(@PathVariable Long id) {
-        return ResponseEntity.ok(claimService.getDetailsById(id));
+    public ResponseEntity<pi.db.piversionbd.dto.ClaimResponse> getDetailsById(@PathVariable Long id) {
+        Claim c = claimService.getDetailsById(id);
+        return ResponseEntity.ok(claimService.toResponse(c));
     }
 
     @GetMapping("/by-number/{claimNumber}")
-    public ResponseEntity<Claim> getByClaimNumber(@PathVariable String claimNumber) {
-        return ResponseEntity.ok(claimService.getByClaimNumber(claimNumber));
+    public ResponseEntity<pi.db.piversionbd.dto.ClaimResponse> getByClaimNumber(@PathVariable String claimNumber) {
+        Claim c = claimService.getByClaimNumber(claimNumber);
+        return ResponseEntity.ok(claimService.toResponse(c));
     }
 
     @GetMapping
-    public ResponseEntity<Page<Claim>> getAll(
+    public ResponseEntity<Page<pi.db.piversionbd.dto.ClaimResponse>> getAll(
             @RequestParam(required = false) ClaimStatus status,
             @PageableDefault(size = 10, sort = "createdAt") Pageable pageable
     ) {
         if (status != null) {
-            return ResponseEntity.ok(claimService.getByStatus(status, pageable));
+            return ResponseEntity.ok(claimService.getByStatus(status, pageable).map(claimService::toResponse));
         }
-        return ResponseEntity.ok(claimService.getAll(pageable));
+        return ResponseEntity.ok(claimService.getAll(pageable).map(claimService::toResponse));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Claim> update(@PathVariable Long id, @RequestBody Claim request) {
-        return ResponseEntity.ok(claimService.update(id, request));
+    public ResponseEntity<pi.db.piversionbd.dto.ClaimResponse> update(@PathVariable Long id, @RequestBody Claim request) {
+        Claim updated = claimService.update(id, request);
+        return ResponseEntity.ok(claimService.toResponse(updated));
     }
 
     @PatchMapping("/{id}/status")
-    public ResponseEntity<Claim> updateStatus(@PathVariable Long id, @RequestBody ClaimStatusUpdateRequest request) {
-        return ResponseEntity.ok(
-                claimService.updateStatus(
-                        id,
-                        request.getStatus(),
-                        request.getReason(),
-                        request.getComment()
-                )
-        );
+    public ResponseEntity<pi.db.piversionbd.dto.ClaimResponse> updateStatus(
+            @PathVariable Long id,
+            @RequestBody ClaimStatusUpdateRequest request
+    ) {
+        Claim updated = claimService.updateStatus(id, request.getStatus(), request.getReason(), request.getComment());
+        return ResponseEntity.ok(claimService.toResponse(updated));
     }
 
     @DeleteMapping("/{id}")
