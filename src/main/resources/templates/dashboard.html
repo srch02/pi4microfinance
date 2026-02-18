@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Admin</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<section class="section">
+    <div class="container">
+        <h1 class="title">Tableau de bord</h1>
+        <p class="subtitle">Vue d'ensemble des utilisateurs et de leur statut</p>
+        <div class="columns is-multiline">
+            <div class="column is-one-quarter">
+                <div class="box has-text-centered">
+                    <p class="heading">Total utilisateurs</p>
+                    <p id="totalUsers" class="title">—</p>
+                </div>
+            </div>
+            <div class="column is-one-quarter">
+                <div class="box has-text-centered">
+                    <p class="heading">Admins</p>
+                    <p id="totalAdmins" class="title">—</p>
+                </div>
+            </div>
+            <div class="column is-one-quarter">
+                <div class="box has-text-centered">
+                    <p class="heading">Membres</p>
+                    <p id="totalMembers" class="title">—</p>
+                </div>
+            </div>
+            <div class="column is-one-quarter">
+                <div class="box has-text-centered">
+                    <p class="heading">Comptes bloqués</p>
+                    <p id="blockedUsers" class="title">—</p>
+                </div>
+            </div>
+            <div class="column is-one-quarter">
+                <div class="box has-text-centered">
+                    <p class="heading">Comptes verrouillés</p>
+                    <p id="lockedUsers" class="title">—</p>
+                </div>
+            </div>
+            <div class="column is-one-quarter">
+                <div class="box has-text-centered">
+                    <p class="heading">Nouveaux aujourd'hui</p>
+                    <p id="newUsersToday" class="title">—</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="columns">
+            <div class="column">
+                <div class="box">
+                    <h2 class="subtitle">Répartition des rôles</h2>
+                    <canvas id="rolesChart" height="120"></canvas>
+                </div>
+            </div>
+            <div class="column">
+                <div class="box">
+                    <h2 class="subtitle">États des comptes</h2>
+                    <canvas id="statusChart" height="120"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<script>
+(async function loadStats() {
+    try {
+        const resp = await fetch('/api/admin/users/dashboard', { headers: { 'Accept': 'application/json' } });
+        if (!resp.ok) {
+            console.error('Échec de récupération des stats', resp.status);
+            return;
+        }
+        const stats = await resp.json();
+        // Remplir les compteurs
+        document.getElementById('totalUsers').textContent = stats.totalUsers;
+        document.getElementById('totalAdmins').textContent = stats.totalAdmins;
+        document.getElementById('totalMembers').textContent = stats.totalMembers;
+        document.getElementById('blockedUsers').textContent = stats.blockedUsers;
+        document.getElementById('lockedUsers').textContent = stats.lockedUsers;
+        document.getElementById('newUsersToday').textContent = stats.newUsersToday;
+
+        // Donut des rôles
+        const rolesCtx = document.getElementById('rolesChart');
+        new Chart(rolesCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Admins', 'Membres'],
+                datasets: [{
+                    data: [stats.totalAdmins, stats.totalMembers],
+                    backgroundColor: ['#00d1b2', '#209cee'],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                plugins: { legend: { position: 'bottom' } }
+            }
+        });
+
+        // Barres des états de compte
+        const statusCtx = document.getElementById('statusChart');
+        new Chart(statusCtx, {
+            type: 'bar',
+            data: {
+                labels: ['Bloqués', 'Verrouillés', 'Nouveaux (aujourd’hui)'],
+                datasets: [{
+                    data: [stats.blockedUsers, stats.lockedUsers, stats.newUsersToday],
+                    backgroundColor: ['#ff3860', '#ffdd57', '#23d160']
+                }]
+            },
+            options: {
+                scales: { y: { beginAtZero: true, precision: 0 } },
+                plugins: { legend: { display: false } }
+            }
+        });
+    } catch (e) {
+        console.error('Erreur de chargement des stats', e);
+    }
+})();
+</script>
+</body>
+</html>

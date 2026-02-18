@@ -37,4 +37,3 @@ public class AdminReviewQueueItem {
     @JoinColumn(name = "assigned_to_admin_id")
     private AdminUser assignedTo;
 }
-
