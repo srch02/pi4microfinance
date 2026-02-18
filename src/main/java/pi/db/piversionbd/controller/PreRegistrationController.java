@@ -82,6 +82,37 @@ public class PreRegistrationController {
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
+    @PostMapping(path = "/ocr/cin", consumes = MediaType.MULTIPART_FORM_DATA_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Extrait le numéro CIN depuis un document (OCR best-effort)")
+    public ResponseEntity<CinOcrResponseDTO> extractCin(
+        @Parameter(description = "Fichier CIN (image ou texte)", required = true)
+        @RequestPart("file") MultipartFile file
+    ) {
+        return ResponseEntity.ok(preRegistrationService.extractCinFromDocument(file));
+    }
+
+    @PostMapping(path = "/{id}/cin/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary = "Upload du document CIN et scan fraude (alerte admin si suspect)")
+    public ResponseEntity<Void> uploadCin(
+        @Parameter(description = "ID de la pré-inscription", example = "1")
+        @PathVariable Long id,
+        @Parameter(description = "Fichier CIN à uploader", required = true)
+        @RequestPart("file") MultipartFile file
+    ) {
+        preRegistrationService.uploadCinDocument(id, file);
+        return ResponseEntity.status(HttpStatus.CREATED).build();
+    }
+
+    @PostMapping(path = "/medical-history/qa", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Soumet l'historique médical via Q&A et lance une analyse IA/ML-like (alerte admin si suspect)")
+    public ResponseEntity<MedicalHistoryAssessmentDTO> submitMedicalHistoryQa(
+        @Valid @RequestBody MedicalHistoryQaRequestDTO request
+    ) {
+        return ResponseEntity.ok(
+            preRegistrationService.submitMedicalHistoryQa(request.getPreRegistrationId(), request.getAnswers())
+        );
+    }
+
     @PutMapping(value = "/update/{id}", consumes = MediaType.APPLICATION_JSON_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(summary = "Met à jour une pré-inscription")
     public ResponseEntity<PreRegistrationSummaryDTO> updatePreRegistration(

@@ -5,6 +5,8 @@ import lombok.Data;
 import pi.db.piversionbd.entities.groups.Member;
 import pi.db.piversionbd.entities.score.Claim;
 
+import java.time.LocalDateTime;
+
 @Entity
 @Table(name = "DOCUMENT_UPLOADS")
 @Data
@@ -29,8 +31,24 @@ public class DocumentUpload {
     @Column(name = "fraud_detection_score")
     private Float fraudDetectionScore;
 
+    @Column(name = "document_type")
+    private String documentType;
+
     // Optional: store file path on disk for reference / download
     @Column(name = "file_path")
     private String filePath;
+
+    @Column(name = "uploaded_at")
+    private LocalDateTime uploadedAt;
+
+    @Column(name = "extracted_cin")
+    private String extractedCin;
+
+    @Lob
+    @Column(name = "extracted_text")
+    private String extractedText;
+
+    @Column(name = "analysis_summary", length = 512)
+    private String analysisSummary;
 }
 

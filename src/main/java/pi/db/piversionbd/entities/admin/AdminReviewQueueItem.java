@@ -6,6 +6,8 @@ import pi.db.piversionbd.entities.groups.Member;
 import pi.db.piversionbd.entities.pre.PreRegistration;
 import pi.db.piversionbd.entities.score.Claim;
 
+import java.time.LocalDateTime;
+
 @Entity
 @Table(name = "ADMIN_REVIEW_QUEUE")
 @Data
@@ -20,6 +22,16 @@ public class AdminReviewQueueItem {
 
     @Column(name = "priority_score")
     private Float priorityScore;
+
+    @Column(name = "is_alert")
+    private Boolean alert;
+
+    @Lob
+    @Column(name = "alert_reason")
+    private String alertReason;
+
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
 
     @ManyToOne
     @JoinColumn(name = "pre_registration_id")

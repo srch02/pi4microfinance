@@ -4,6 +4,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import pi.db.piversionbd.entities.pre.FinancialStabilityLevel;
+import pi.db.piversionbd.entities.pre.PreRegistrationStatus;
 import pi.db.piversionbd.service.IPreRegistrationService;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -35,7 +37,7 @@ class PreRegistrationControllerTest {
         request.setMedicalDeclarationText("recurrent flu, seasonal allergies");
         request.setAge(35);
         request.setProfession("office");
-        request.setFinancialStability("stable");
+        request.setFinancialStability(FinancialStabilityLevel.STABLE);
         request.setSeasonalIllnessMonthsPerYear(1);
 
         var response = preRegistrationService.submitPreRegistration(request);
@@ -43,7 +45,7 @@ class PreRegistrationControllerTest {
         assertTrue(response.isSuccess());
         assertNotNull(response.getPreRegistrationId());
         assertNotNull(response.getCalculatedPrice());
-        assertEquals("PENDING_REVIEW", response.getStatus());
+        assertEquals(PreRegistrationStatus.PENDING_REVIEW, response.getStatus());
     }
 
     @Test
