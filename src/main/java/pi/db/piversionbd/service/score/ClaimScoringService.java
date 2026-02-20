@@ -1,12 +1,12 @@
-package pi.db.piversionbd.services.score;
+package pi.db.piversionbd.service.score;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pi.db.piversionbd.entities.score.*;
-import pi.db.piversionbd.exceptions.NotFoundException;
-import pi.db.piversionbd.repositories.score.ClaimRepository;
-import pi.db.piversionbd.repositories.score.ClaimScoringRepository;
+import pi.db.piversionbd.exception.ResourceNotFoundException;
+import pi.db.piversionbd.repository.score.ClaimRepository;
+import pi.db.piversionbd.repository.score.ClaimScoringRepository;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -22,13 +22,13 @@ public class ClaimScoringService {
     @Transactional(readOnly = true)
     public ClaimScoring getById(Long id) {
         return claimScoringRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("ClaimScoring introuvable: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("ClaimScoring introuvable: " + id));
     }
 
     @Transactional(readOnly = true)
     public ClaimScoring getByClaimId(Long claimId) {
         return claimScoringRepository.findByClaimId(claimId)
-                .orElseThrow(() -> new NotFoundException("ClaimScoring introuvable pour claimId: " + claimId));
+                .orElseThrow(() -> new ResourceNotFoundException("ClaimScoring introuvable pour claimId: " + claimId));
     }
 
     /**
@@ -36,7 +36,7 @@ public class ClaimScoringService {
      */
     public ClaimScoring upsertByClaimId(Long claimId, ClaimScoring request) {
         Claim claim = claimRepository.findById(claimId)
-                .orElseThrow(() -> new NotFoundException("Claim introuvable: " + claimId));
+                .orElseThrow(() -> new ResourceNotFoundException("Claim introuvable: " + claimId));
 
         ClaimScoring scoring = claimScoringRepository.findByClaimId(claimId)
                 .orElseGet(ClaimScoring::new);
@@ -65,7 +65,7 @@ public class ClaimScoringService {
 
     public void deleteByClaimId(Long claimId) {
         if (!claimScoringRepository.existsByClaimId(claimId)) {
-            throw new NotFoundException("ClaimScoring introuvable pour claimId: " + claimId);
+            throw new ResourceNotFoundException("ClaimScoring introuvable pour claimId: " + claimId);
         }
         claimScoringRepository.deleteByClaimId(claimId);
     }

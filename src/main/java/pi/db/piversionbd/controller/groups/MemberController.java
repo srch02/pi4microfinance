@@ -32,6 +32,13 @@ public class MemberController {
     private final IMembershipService membershipService;
     private final IGroupService groupService;
 
+    @GetMapping("/sample")
+    @Operation(summary = "Member area sample", description = "Simple endpoint to verify MEMBER access (e.g. after login).")
+    @ApiResponse(responseCode = "200", description = "MEMBER access OK")
+    public ResponseEntity<String> sample() {
+        return ResponseEntity.ok("MEMBER access OK");
+    }
+
     @GetMapping
     @Operation(summary = "List all members or filter by group", description = "Use optional query param groupId to get only members of that group.")
     @ApiResponse(responseCode = "200", description = "OK")
@@ -90,7 +97,7 @@ public class MemberController {
     }
 
     @PostMapping
-    @Operation(summary = "Create a new member", description = "Member form after acceptance: CIN from pre-registration; member fills age, profession, region. Group is not set here — add the member to a group later via membership (POST /api/groups/{groupId}/members).")
+    @Operation(summary = "Create a new member", description = "Member form after acceptance: CIN from pre-registration; member fills age, profession, region. Personalized monthly price and adherence score are read-only (from preinscription and score module). Group is not set here — add the member to a group later via membership (POST /api/groups/{groupId}/members).")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Member created"),
             @ApiResponse(responseCode = "400", description = "cinNumber required"),
@@ -101,16 +108,15 @@ public class MemberController {
             @Parameter(description = "Age (for group suggestions). Placeholder: 28", schema = @Schema(example = "28")) @RequestParam(required = false) Integer age,
             @Parameter(description = "Profession (e.g. student, worker). Placeholder: student", schema = @Schema(example = "student")) @RequestParam(required = false) String profession,
             @Parameter(description = "Region. Placeholder: Tunis", schema = @Schema(example = "Tunis")) @RequestParam(required = false) String region,
-            @Parameter(description = "Personalized monthly premium (DT). Placeholder: 17.5", schema = @Schema(example = "17.5")) @RequestParam(required = false) Float personalizedMonthlyPrice,
-            @Parameter(description = "Adherence score (0-100). Placeholder: 85", schema = @Schema(example = "85")) @RequestParam(required = false) Float adherenceScore) {
-        GroupsModuleDto.MemberDto dto = new GroupsModuleDto.MemberDto(null, cinNumber, age, profession, region, personalizedMonthlyPrice, null, null, null, adherenceScore, null);
+            @Parameter(description = "Email (for login / notifications). Placeholder: member@example.com", schema = @Schema(example = "member@example.com")) @RequestParam(required = false) String email) {
+        GroupsModuleDto.MemberDto dto = new GroupsModuleDto.MemberDto(null, cinNumber, age, profession, region, email, null, null, null, null, null, null, null, null, null, null, null);
         Member member = toEntity(dto);
         Member created = memberService.createMember(member);
         return ResponseEntity.status(HttpStatus.CREATED).body(GroupsModuleDto.MemberDto.fromEntity(created));
     }
 
     @PutMapping("/{memberId}")
-    @Operation(summary = "Update member by ID", description = "Send the fields to update; omitted params keep existing values. CIN is not updatable (set from pre-registration, verified and admin-approved). Use placeholders as a guide.")
+    @Operation(summary = "Update member by ID", description = "Send the fields to update; omitted params keep existing values. CIN, personalized monthly price, and adherence score are not updatable (from preinscription and score module, read-only).")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "OK – updated member"),
             @ApiResponse(responseCode = "400", description = "No fields to update (send at least one param)"),
@@ -121,21 +127,19 @@ public class MemberController {
             @Parameter(description = "Age. Placeholder: 28", schema = @Schema(example = "28")) @RequestParam(required = false) Integer age,
             @Parameter(description = "Profession. Placeholder: student", schema = @Schema(example = "student")) @RequestParam(required = false) String profession,
             @Parameter(description = "Region. Placeholder: Tunis", schema = @Schema(example = "Tunis")) @RequestParam(required = false) String region,
-            @Parameter(description = "Personalized monthly premium (DT). Placeholder: 17.5", schema = @Schema(example = "17.5")) @RequestParam(required = false) Float personalizedMonthlyPrice,
-            @Parameter(description = "Adherence score (0-100). Placeholder: 85", schema = @Schema(example = "85")) @RequestParam(required = false) Float adherenceScore,
+            @Parameter(description = "Email (for login / notifications).", schema = @Schema(example = "member@example.com")) @RequestParam(required = false) String email,
             @Parameter(description = "Current group ID. Placeholder: 1", schema = @Schema(example = "1")) @RequestParam(required = false) Long currentGroupId) {
         Member existing = memberService.getMemberById(memberId);
-        boolean noParamsSent = age == null && profession == null && region == null && personalizedMonthlyPrice == null && adherenceScore == null && currentGroupId == null;
+        boolean noParamsSent = age == null && profession == null && region == null && email == null && currentGroupId == null;
         if (noParamsSent) {
             return ResponseEntity.badRequest().build();
         }
         Integer newAge = age != null ? age : existing.getAge();
         String newProfession = profession != null ? profession : existing.getProfession();
         String newRegion = region != null ? region : existing.getRegion();
-        Float newPrice = personalizedMonthlyPrice != null ? personalizedMonthlyPrice : existing.getPersonalizedMonthlyPrice();
-        Float newScore = adherenceScore != null ? adherenceScore : existing.getAdherenceScore();
+        String newEmail = email != null ? email : existing.getEmail();
         Long newGroupId = currentGroupId != null ? currentGroupId : (existing.getCurrentGroup() != null ? existing.getCurrentGroup().getId() : null);
-        GroupsModuleDto.MemberDto dto = new GroupsModuleDto.MemberDto(memberId, existing.getCinNumber(), newAge, newProfession, newRegion, newPrice, existing.getPriceBasic(), existing.getPriceConfort(), existing.getPricePremium(), newScore, newGroupId);
+        GroupsModuleDto.MemberDto dto = new GroupsModuleDto.MemberDto(memberId, existing.getCinNumber(), newAge, newProfession, newRegion, newEmail, existing.getPersonalizedMonthlyPrice(), existing.getPriceBasic(), existing.getPriceConfort(), existing.getPricePremium(), existing.getAdherenceScore(), newGroupId, existing.getEnabled(), existing.getFailedLoginAttempts(), existing.getLockedAt(), existing.getLastLogin(), existing.getCreatedAt());
         Member member = toEntity(dto);
         memberService.resolveCurrentGroup(member, newGroupId);
         Member updated = memberService.updateMember(memberId, member);
@@ -176,11 +180,13 @@ public class MemberController {
         m.setAge(dto.getAge());
         m.setProfession(dto.getProfession());
         m.setRegion(dto.getRegion());
+        m.setEmail(dto.getEmail());
         m.setPersonalizedMonthlyPrice(dto.getPersonalizedMonthlyPrice());
         m.setPriceBasic(dto.getPriceBasic());
         m.setPriceConfort(dto.getPriceConfort());
         m.setPricePremium(dto.getPricePremium());
         m.setAdherenceScore(dto.getAdherenceScore());
+        m.setCurrentGroup(null); // resolved via resolveCurrentGroup(member, currentGroupId)
         return m;
     }
 }

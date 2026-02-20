@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,9 +37,43 @@ public class AdminUserService {
     @Value("${spring.mail.from:}")
     private String mailFrom;
 
-    // 🔐 REGISTER
+    private static final Pattern EMAIL_PATTERN = Pattern.compile(
+            "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
+    );
+
+    private static void validateEmail(String email) {
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException("Email requis");
+        }
+        if (!EMAIL_PATTERN.matcher(email).matches()) {
+            throw new IllegalArgumentException("Format d'email invalide");
+        }
+    }
+
+    private static void validatePassword(String rawPassword) {
+        if (rawPassword == null || rawPassword.isBlank()) {
+            throw new IllegalArgumentException("Mot de passe requis");
+        }
+        if (rawPassword.length() < 8) {
+            throw new IllegalArgumentException("Mot de passe trop court (min 8)");
+        }
+        boolean hasLetter = rawPassword.chars().anyMatch(Character::isLetter);
+        boolean hasDigit = rawPassword.chars().anyMatch(Character::isDigit);
+        if (!(hasLetter && hasDigit)) {
+            throw new IllegalArgumentException("Mot de passe faible: inclure au moins une lettre et un chiffre");
+        }
+    }
+
+    // 🔐 REGISTER avec rôle
     @Transactional
-    public AdminUser register(String username, String email, String rawPassword) {
+    public AdminUser registerWithRole(String username, String email, String rawPassword, String role) {
+        username = normalizeUsername(username);
+        email = normalizeEmail(email);
+        if (username == null || username.isBlank()) {
+            throw new IllegalArgumentException("Username requis");
+        }
+        validateEmail(email);
+        validatePassword(rawPassword);
         if (adminUserRepository.existsByUsername(username)) {
             throw new IllegalArgumentException("Username déjà utilisé");
         }
@@ -50,10 +85,16 @@ public class AdminUserService {
         user.setEmail(email);
         user.setEnabled(true);
         user.setPassword(passwordEncoder.encode(rawPassword));
-        user.setRole("ADMIN");
+        user.setRole(role);
         AdminUser saved = adminUserRepository.save(user);
         sendWelcomeEmail(saved);
         return saved;
+    }
+
+    // 🔐 REGISTER (ADMIN par défaut)
+    @Transactional
+    public AdminUser register(String username, String email, String rawPassword) {
+        return registerWithRole(username, email, rawPassword, "ADMIN");
     }
 
     // 🔐 LOGIN
@@ -114,13 +155,21 @@ public class AdminUserService {
 
     public Optional<AdminUser> updateAdminUser(Long id, AdminUser details) {
         return adminUserRepository.findById(id).map(user -> {
-
-            user.setUsername(details.getUsername());
-            user.setEmail(details.getEmail());
-            user.setRole(details.getRole());
+            if (details.getUsername() != null && !details.getUsername().isBlank()) {
+                user.setUsername(normalizeUsername(details.getUsername()));
+            }
+            if (details.getEmail() != null && !details.getEmail().isBlank()) {
+                String normalizedEmail = normalizeEmail(details.getEmail());
+                validateEmail(normalizedEmail);
+                user.setEmail(normalizedEmail);
+            }
+            if (details.getRole() != null && !details.getRole().isBlank()) {
+                user.setRole(details.getRole());
+            }
             user.setPermissions(details.getPermissions());
 
-            if(details.getPassword() != null && !details.getPassword().isEmpty()) {
+            if (details.getPassword() != null && !details.getPassword().isEmpty()) {
+                validatePassword(details.getPassword());
                 user.setPassword(passwordEncoder.encode(details.getPassword()));
             }
 
@@ -238,6 +287,13 @@ public class AdminUserService {
         stats.put("lockedUsers", locked);
         stats.put("newUsersToday", newToday);
         return stats;
+    }
+
+    private static String normalizeUsername(String username) {
+        return username == null ? null : username.trim();
+    }
+    private static String normalizeEmail(String email) {
+        return email == null ? null : email.trim().toLowerCase();
     }
 }
 

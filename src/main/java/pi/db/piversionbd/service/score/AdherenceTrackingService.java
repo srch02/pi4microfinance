@@ -1,20 +1,22 @@
-package pi.db.piversionbd.services.score;
+package pi.db.piversionbd.service.score;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import pi.db.piversionbd.dto.AdherenceCreateRequest;
-import pi.db.piversionbd.dto.AdherenceResponse;
+import pi.db.piversionbd.dto.score.AdherenceCreateRequest;
+import pi.db.piversionbd.dto.score.AdherenceResponse;
 import pi.db.piversionbd.entities.groups.Member;
 import pi.db.piversionbd.entities.score.AdherenceEventType;
 import pi.db.piversionbd.entities.score.AdherenceTracking;
 import pi.db.piversionbd.entities.score.Claim;
-import pi.db.piversionbd.exceptions.NotFoundException;
-import pi.db.piversionbd.repositories.score.AdherenceTrackingRepository;
-import pi.db.piversionbd.repositories.score.ClaimRepository;
+import pi.db.piversionbd.exception.ResourceNotFoundException;
+import pi.db.piversionbd.repository.score.AdherenceTrackingRepository;
+import pi.db.piversionbd.repository.score.ClaimRepository;
 import pi.db.piversionbd.repository.groups.MemberRepository;
+
+import java.math.BigDecimal;
 
 @Service
 @RequiredArgsConstructor
@@ -35,13 +37,15 @@ public class AdherenceTrackingService {
         if (event.getScoreChange() == null || event.getCurrentScore() == null) {
             throw new IllegalArgumentException("scoreChange et currentScore sont obligatoires.");
         }
-        return adherenceTrackingRepository.save(event);
+        AdherenceTracking saved = adherenceTrackingRepository.save(event);
+        syncMemberAdherenceScore(event.getMember().getId(), event.getCurrentScore());
+        return saved;
     }
 
     @Transactional(readOnly = true)
     public AdherenceTracking getById(Long id) {
         return adherenceTrackingRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("AdherenceTracking introuvable: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("AdherenceTracking introuvable: " + id));
     }
 
     @Transactional(readOnly = true)
@@ -63,7 +67,11 @@ public class AdherenceTrackingService {
         existing.setRelatedClaim(request.getRelatedClaim());
         existing.setNote(request.getNote());
 
-        return adherenceTrackingRepository.save(existing);
+        AdherenceTracking saved = adherenceTrackingRepository.save(existing);
+        if (saved.getMember() != null && saved.getCurrentScore() != null) {
+            syncMemberAdherenceScore(saved.getMember().getId(), saved.getCurrentScore());
+        }
+        return saved;
     }
 
     public void delete(Long id) {
@@ -77,12 +85,12 @@ public class AdherenceTrackingService {
         if (req.eventType == null) throw new IllegalArgumentException("eventType obligatoire");
 
         Member member = memberRepository.findById(req.memberId)
-                .orElseThrow(() -> new NotFoundException("Member introuvable: " + req.memberId));
+                .orElseThrow(() -> new ResourceNotFoundException("Member introuvable: " + req.memberId));
 
         Claim claim = null;
         if (req.claimId != null) {
             claim = claimRepository.findById(req.claimId)
-                    .orElseThrow(() -> new NotFoundException("Claim introuvable: " + req.claimId));
+                    .orElseThrow(() -> new ResourceNotFoundException("Claim introuvable: " + req.claimId));
         }
 
         AdherenceTracking e = new AdherenceTracking();
@@ -93,7 +101,30 @@ public class AdherenceTrackingService {
         e.setCurrentScore(req.currentScore);
         e.setNote(req.note);
 
-        return adherenceTrackingRepository.save(e);
+        AdherenceTracking saved = adherenceTrackingRepository.save(e);
+        syncMemberAdherenceScore(member.getId(), req.currentScore);
+        return saved;
+    }
+
+    /**
+     * Returns the current adherence score for a member from the score module (latest event's currentScore).
+     * Use this when displaying member so adherence is always from score.
+     */
+    @Transactional(readOnly = true)
+    public Float getCurrentAdherenceScoreForMember(Long memberId) {
+        return adherenceTrackingRepository.findTop1ByMember_IdOrderByCreatedAtDesc(memberId)
+                .map(AdherenceTracking::getCurrentScore)
+                .map(BigDecimal::floatValue)
+                .orElse(null);
+    }
+
+    /** Updates Member.adherenceScore so it stays in sync with the score module. */
+    private void syncMemberAdherenceScore(Long memberId, java.math.BigDecimal currentScore) {
+        if (memberId == null || currentScore == null) return;
+        memberRepository.findById(memberId).ifPresent(m -> {
+            m.setAdherenceScore(currentScore.floatValue());
+            memberRepository.save(m);
+        });
     }
 
     public AdherenceResponse toResponse(AdherenceTracking e) {

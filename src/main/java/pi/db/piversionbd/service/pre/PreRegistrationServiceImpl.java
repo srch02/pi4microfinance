@@ -1,26 +1,29 @@
 package pi.db.piversionbd.service.pre;
-
+import pi.db.piversionbd.entities.groups.Member;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import pi.db.piversionbd.dto.pre.CinOcrResponseDTO;
 import pi.db.piversionbd.dto.pre.MedicalHistoryAssessmentDTO;
-import pi.db.piversionbd.controller.PreRegistrationException;
+import pi.db.piversionbd.controller.pre.PreRegistrationException;
 import pi.db.piversionbd.dto.pre.PreRegistrationRequestDTO;
 import pi.db.piversionbd.dto.pre.PreRegistrationResponseDTO;
 import pi.db.piversionbd.dto.pre.PreRegistrationSummaryDTO;
+import pi.db.piversionbd.entities.admin.SystemAlert;
 import pi.db.piversionbd.entities.groups.Member;
 import pi.db.piversionbd.entities.groups.PackageType;
 import pi.db.piversionbd.entities.pre.*;
 import pi.db.piversionbd.entities.admin.AdminReviewQueueItem;
 import pi.db.piversionbd.repository.admin.AdminReviewQueueItemRepository;
-import pi.db.piversionbd.repository.BlacklistRepository;
-import pi.db.piversionbd.repository.DocumentUploadRepository;
-import pi.db.piversionbd.repository.ExcludedConditionRepository;
-import pi.db.piversionbd.repository.MedicalHistoryRepository;
-import pi.db.piversionbd.repository.RiskAssessmentRepository;
+import pi.db.piversionbd.repository.admin.SystemAlertRepository;
+import pi.db.piversionbd.repository.pre.BlacklistRepository;
+import pi.db.piversionbd.repository.pre.DocumentUploadRepository;
+import pi.db.piversionbd.repository.pre.ExcludedConditionRepository;
+import pi.db.piversionbd.repository.pre.MedicalHistoryRepository;
+import pi.db.piversionbd.repository.pre.RiskAssessmentRepository;
 import pi.db.piversionbd.repository.groups.MemberRepository;
+
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -53,6 +56,7 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
     private final RiskAssessmentRepository riskAssessmentRepository;
     private final DocumentUploadRepository documentUploadRepository;
     private final AdminReviewQueueItemRepository adminReviewQueueItemRepository;
+    private final SystemAlertRepository systemAlertRepository;
     private final MemberRepository memberRepository;
     private final MedicalHistoryAiService medicalHistoryAiService;
 
@@ -244,6 +248,7 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         member.setCurrentGroup(null);
         member.setPreRegistration(pre);
         member = memberRepository.save(member);
+        enqueueMemberActivatedSystemAlert(pre, member);
 
         pre.setStatus(PreRegistrationStatus.ACTIVATED);
         preRegistrationRepository.save(pre);
@@ -271,6 +276,7 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         member.setCurrentGroup(null);
         member.setPreRegistration(pre);
         member = memberRepository.save(member);
+        enqueueMemberActivatedSystemAlert(pre, member);
 
         pre.setStatus(PreRegistrationStatus.ACTIVATED);
         preRegistrationRepository.save(pre);
@@ -285,6 +291,14 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         if (pre.getStatus() == PreRegistrationStatus.ACTIVATED) {
             throw new PreRegistrationException("Cannot delete: account already activated.");
         }
+
+        // ADD THIS - nullify member's preRegistration reference first
+        Member member = memberRepository.findByPreRegistration_Id(id);
+        if (member != null) {
+            member.setPreRegistration(null);
+            memberRepository.save(member);
+        }
+
         adminReviewQueueItemRepository.findByPreRegistration(pre).forEach(adminReviewQueueItemRepository::delete);
         riskAssessmentRepository.findByPreRegistration_Id(pre.getId()).forEach(riskAssessmentRepository::delete);
         medicalHistoryRepository.findByPreRegistration_Id(pre.getId()).forEach(medicalHistoryRepository::delete);
@@ -596,6 +610,32 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         item.setAlertReason(reason);
         item.setCreatedAt(LocalDateTime.now());
         adminReviewQueueItemRepository.save(item);
+    }
+
+    /** System alert for admin dashboards when a pre-registration becomes an active member (deduped). */
+    private void enqueueMemberActivatedSystemAlert(PreRegistration pre, Member member) {
+        if (pre == null || pre.getId() == null) return;
+        boolean exists = systemAlertRepository
+            .findByAlertTypeAndSourceEntityTypeAndSourceEntityIdAndActive(
+                "MEMBER_ACTIVATED", "PRE_REGISTRATION", pre.getId(), true)
+            .isPresent();
+        if (exists) return;
+
+        SystemAlert alert = new SystemAlert();
+        alert.setAlertType("MEMBER_ACTIVATED");
+        alert.setSeverity("low");
+        alert.setRegion(null);
+        alert.setTitle("Member activated");
+        alert.setMessage(String.format(
+            "Pre-registration id=%d (CIN=%s) has been activated as member id=%s.",
+            pre.getId(),
+            pre.getCinNumber() != null ? pre.getCinNumber() : "—",
+            member != null && member.getId() != null ? member.getId().toString() : "—"
+        ));
+        alert.setActive(true);
+        alert.setSourceEntityType("PRE_REGISTRATION");
+        alert.setSourceEntityId(pre.getId());
+        systemAlertRepository.save(alert);
     }
 
     private String extractCinFromText(String text) {

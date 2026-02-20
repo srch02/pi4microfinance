@@ -1,4 +1,4 @@
-package pi.db.piversionbd.repositories.score;
+package pi.db.piversionbd.repository.score;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;

@@ -133,43 +133,60 @@ public final class GroupsModuleDto {
     @NoArgsConstructor
     @AllArgsConstructor
     @Schema(
-            description = "Member form: after acceptance, app shows this form with pre-registration info. Member fills age, profession, region; chooses package (BASIC/CONFORT/PREMIUM) then pays.",
-            example = "{\"memberId\": 1, \"cinNumber\": \"12345678\", \"age\": 28, \"profession\": \"student\", \"region\": \"Tunis\", \"personalizedMonthlyPrice\": 17.5, \"adherenceScore\": 85, \"currentGroupId\": 1}"
+            description = "Member: identity (CIN, email), profile (age, profession, region), prices from preinscription (read-only), adherence from score (read-only), auth/admin state (read-only)."
     )
     public static class MemberDto {
 
-        @Schema(description = "Member ID (read-only on response; omit for create)", example = "1", accessMode = Schema.AccessMode.READ_ONLY)
+        @Schema(description = "Member ID.", example = "1", accessMode = Schema.AccessMode.READ_ONLY)
         private Long memberId;
 
-        @Schema(description = "CIN number (from pre-registration, not editable on update)", example = "12345678", requiredMode = Schema.RequiredMode.REQUIRED)
+        @Schema(description = "CIN number (from pre-registration).", example = "12345678", requiredMode = Schema.RequiredMode.REQUIRED)
         private String cinNumber;
 
-        @Schema(description = "Age (for group suggestions / future age-range matching)", example = "28")
+        @Schema(description = "Age (for group suggestions).", example = "28")
         private Integer age;
 
-        @Schema(description = "Profession (e.g. student, worker) – for group type matching: students→STUDENTS, workers→WORKERS, family→FAMILY", example = "student")
+        @Schema(description = "Profession (e.g. student, worker).", example = "student")
         private String profession;
 
-        @Schema(description = "Region – for group suggestions (same region)", example = "Tunis")
+        @Schema(description = "Region (for group suggestions).", example = "Tunis")
         private String region;
 
-        @Schema(description = "Personalized monthly premium (DT). Placeholder: 17.5", example = "17.5")
+        @Schema(description = "Email (for login / notifications).", example = "member@example.com")
+        private String email;
+
+        @Schema(description = "Personalized monthly premium (DT). Read-only, from preinscription.", example = "17.5", accessMode = Schema.AccessMode.READ_ONLY)
         private Float personalizedMonthlyPrice;
 
-        @Schema(description = "Price for BASIC package (from preinscription). Use when creating membership with packageType=BASIC.", example = "25.0")
+        @Schema(description = "Price BASIC (from preinscription). Read-only.", example = "25.0", accessMode = Schema.AccessMode.READ_ONLY)
         private Float priceBasic;
 
-        @Schema(description = "Price for CONFORT package (from preinscription). Use when creating membership with packageType=CONFORT.", example = "32.5")
+        @Schema(description = "Price CONFORT (from preinscription). Read-only.", example = "32.5", accessMode = Schema.AccessMode.READ_ONLY)
         private Float priceConfort;
 
-        @Schema(description = "Price for PREMIUM package (from preinscription). Use when creating membership with packageType=PREMIUM.", example = "40.0")
+        @Schema(description = "Price PREMIUM (from preinscription). Read-only.", example = "40.0", accessMode = Schema.AccessMode.READ_ONLY)
         private Float pricePremium;
 
-        @Schema(description = "Adherence score (0-100). Placeholder: 85", example = "85", minimum = "0", maximum = "100")
+        @Schema(description = "Adherence score (0-100). Read-only, from score module.", example = "85", accessMode = Schema.AccessMode.READ_ONLY)
         private Float adherenceScore;
 
-        @Schema(description = "Current group ID (optional)", example = "1")
+        @Schema(description = "Current group ID.", example = "1")
         private Long currentGroupId;
+
+        @Schema(description = "Account enabled. Read-only, managed by admin.", example = "true", accessMode = Schema.AccessMode.READ_ONLY)
+        private Boolean enabled;
+
+        @Schema(description = "Failed login attempts. Read-only.", example = "0", accessMode = Schema.AccessMode.READ_ONLY)
+        private Integer failedLoginAttempts;
+
+        @Schema(description = "When account was locked (after too many failed logins). Read-only.", accessMode = Schema.AccessMode.READ_ONLY)
+        private java.time.LocalDateTime lockedAt;
+
+        @Schema(description = "Last successful login. Read-only.", accessMode = Schema.AccessMode.READ_ONLY)
+        private java.time.LocalDateTime lastLogin;
+
+        @Schema(description = "When the member was created. Read-only.", accessMode = Schema.AccessMode.READ_ONLY)
+        private java.time.LocalDateTime createdAt;
 
         public static MemberDto fromEntity(Member m) {
             if (m == null) return null;
@@ -179,12 +196,18 @@ public final class GroupsModuleDto {
                     m.getAge(),
                     m.getProfession(),
                     m.getRegion(),
+                    m.getEmail(),
                     m.getPersonalizedMonthlyPrice(),
                     m.getPriceBasic(),
                     m.getPriceConfort(),
                     m.getPricePremium(),
                     m.getAdherenceScore(),
-                    m.getCurrentGroup() != null ? m.getCurrentGroup().getId() : null
+                    m.getCurrentGroup() != null ? m.getCurrentGroup().getId() : null,
+                    m.getEnabled(),
+                    m.getFailedLoginAttempts(),
+                    m.getLockedAt(),
+                    m.getLastLogin(),
+                    m.getCreatedAt()
             );
         }
     }

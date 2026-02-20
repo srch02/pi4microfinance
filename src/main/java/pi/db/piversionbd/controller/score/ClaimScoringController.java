@@ -1,4 +1,4 @@
-package pi.db.piversionbd.controllers.score;
+package pi.db.piversionbd.controller.score;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;

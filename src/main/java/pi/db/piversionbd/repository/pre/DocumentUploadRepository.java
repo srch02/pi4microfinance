@@ -1,4 +1,4 @@
-package pi.db.piversionbd.repository;
+package pi.db.piversionbd.repository.pre;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import pi.db.piversionbd.entities.pre.DocumentUpload;

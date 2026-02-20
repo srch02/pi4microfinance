@@ -1,4 +1,4 @@
-package pi.db.piversionbd.services.score;
+package pi.db.piversionbd.service.score;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -7,8 +7,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pi.db.piversionbd.entities.score.MemberReward;
 import pi.db.piversionbd.entities.score.RewardRedemptionStatus;
-import pi.db.piversionbd.exceptions.NotFoundException;
-import pi.db.piversionbd.repositories.score.MemberRewardRepository;
+import pi.db.piversionbd.exception.ResourceNotFoundException;
+import pi.db.piversionbd.repository.score.MemberRewardRepository;
 
 import java.time.LocalDateTime;
 
@@ -40,7 +40,7 @@ public class MemberRewardService {
     @Transactional(readOnly = true)
     public MemberReward getById(Long id) {
         return memberRewardRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("MemberReward introuvable: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("MemberReward introuvable: " + id));
     }
 
     @Transactional(readOnly = true)

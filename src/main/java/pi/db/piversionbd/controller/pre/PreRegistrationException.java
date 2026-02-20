@@ -1,4 +1,4 @@
-package pi.db.piversionbd.controller;
+package pi.db.piversionbd.controller.pre;
 
 /**
  * Thrown when pre-registration is rejected (duplicate CIN, blacklist, excluded condition)

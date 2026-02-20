@@ -4,7 +4,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 import pi.db.piversionbd.entities.groups.Member;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface MemberRepository extends JpaRepository<Member, Long> {
@@ -15,4 +17,14 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
 
     boolean existsByCinNumberAndIdNot(String cinNumber, Long id);
 
+    Optional<Member> findByEmail(String email);
+
+    boolean existsByEmail(String email);
+    Member findByPreRegistration_Id(Long preRegistrationId);
+
+    long countByEnabledFalse();
+
+    long countByLockedAtNotNull();
+
+    long countByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
 }

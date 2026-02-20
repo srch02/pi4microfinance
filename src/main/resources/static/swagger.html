@@ -10,6 +10,8 @@
       rel="stylesheet"
       href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"
     />
+    <!-- Project customizations (module highlighting, etc.) -->
+    <link rel="stylesheet" href="/custom-swagger.css" />
 
     <style>
       :root {
@@ -149,11 +151,11 @@
       <header class="pi-header">
         <div class="pi-badge">
           <span class="pi-badge-dot"></span>
-          Module 1 · Groups & Payments
+          All modules · API reference
         </div>
         <h1 class="pi-title">PI4 Microfinance API</h1>
         <p class="pi-subtitle">
-          Backend endpoints for solidarity groups, memberships and payments.
+          Backend endpoints grouped by module (Groups, Pre‑Registration, Score, Admin).
         </p>
       </header>
 
@@ -163,13 +165,100 @@
     <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
     <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
     <script>
+      function moduleKeyFromTag(tag) {
+        if (!tag) return "other";
+        const t = String(tag).toLowerCase();
+        if (t.startsWith("module 1")) return "module1";
+        if (t.includes("pre-registration") || t.includes("pre registration") || t.includes("pré-inscription") || t.startsWith("module 5")) return "module5";
+        if (t.includes("score") || t.includes("adherence") || t.includes("reward") || t.includes("claim")) return "score";
+        if (t.includes("admin") || t.includes("system alert") || t.includes("dashboard")) return "admin";
+        // Map a few existing tags that don't have module prefix
+        if (t === "memberships") return "module1";
+        if (t.includes("group change request")) return "module1";
+        return "other";
+      }
+
+      function moduleOrder(key) {
+        return {
+          module1: 10,
+          module5: 20,
+          score: 30,
+          admin: 40,
+          other: 90,
+        }[key] ?? 90;
+      }
+
+      function humanModuleLabel(key) {
+        return {
+          module1: "Module 1 · Groups",
+          module5: "Module 5 · Pre‑Registration",
+          score: "Module · Score",
+          admin: "Module · Admin",
+          other: "Other",
+        }[key] ?? "Other";
+      }
+
+      function applyModuleClasses(root) {
+        if (!root) return;
+        const sections = root.querySelectorAll(".opblock-tag-section");
+        sections.forEach((section) => {
+          const h4 = section.querySelector(".opblock-tag");
+          const tagText = h4 ? h4.textContent.trim() : "";
+          const key = moduleKeyFromTag(tagText);
+          section.dataset.piModule = key;
+          section.dataset.piModuleLabel = humanModuleLabel(key);
+        });
+      }
+
+      function injectModuleDividers(root) {
+        if (!root) return;
+        // Remove previous dividers
+        root.querySelectorAll(".pi-module-divider").forEach((n) => n.remove());
+
+        const sections = Array.from(root.querySelectorAll(".opblock-tag-section"));
+        if (!sections.length) return;
+
+        // Sort sections as they appear and add a divider when module changes
+        let lastKey = null;
+        sections.forEach((section) => {
+          const key = section.dataset.piModule || "other";
+          if (key !== lastKey) {
+            const divider = document.createElement("div");
+            divider.className = "pi-module-divider";
+            divider.dataset.piModule = key;
+            divider.textContent = section.dataset.piModuleLabel || humanModuleLabel(key);
+            section.parentNode.insertBefore(divider, section);
+            lastKey = key;
+          }
+        });
+      }
+
       window.onload = () => {
-        SwaggerUIBundle({
+        const ui = SwaggerUIBundle({
           url: "/v3/api-docs",
           dom_id: "#swagger-ui-root",
           presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
           layout: "BaseLayout",
+          tagsSorter: (a, b) => {
+            const ka = moduleKeyFromTag(a);
+            const kb = moduleKeyFromTag(b);
+            const oa = moduleOrder(ka);
+            const ob = moduleOrder(kb);
+            if (oa !== ob) return oa - ob;
+            return a.localeCompare(b, undefined, { sensitivity: "base" });
+          },
         });
+
+        // Add module styling after render (and on updates)
+        const root = document.querySelector("#swagger-ui-root");
+        const observer = new MutationObserver(() => {
+          applyModuleClasses(root);
+          injectModuleDividers(root);
+        });
+        observer.observe(root, { childList: true, subtree: true });
+        // Initial pass
+        applyModuleClasses(root);
+        injectModuleDividers(root);
       };
     </script>
   </body>

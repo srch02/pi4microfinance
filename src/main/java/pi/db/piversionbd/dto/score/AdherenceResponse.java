@@ -1,4 +1,4 @@
-package pi.db.piversionbd.dto;
+package pi.db.piversionbd.dto.score;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;

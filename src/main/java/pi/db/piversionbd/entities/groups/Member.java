@@ -15,7 +15,8 @@ import pi.db.piversionbd.entities.pre.PreRegistration;
 import pi.db.piversionbd.entities.score.AdherenceTracking;
 import pi.db.piversionbd.entities.score.Claim;
 import pi.db.piversionbd.entities.score.MemberReward;
-
+import pi.db.piversionbd.entities.pre.PreRegistration;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Entity
@@ -54,6 +55,28 @@ public class Member {
 
     @Column(name = "region", length = 100)
     private String region;
+
+    // Champs d'authentification
+    @Column(unique = true)
+    private String email;
+
+    @Column
+    private String password;
+
+    @Column
+    private Boolean enabled = true;
+
+    @Column(name = "failed_login_attempts")
+    private Integer failedLoginAttempts = 0;
+
+    @Column(name = "locked_at")
+    private LocalDateTime lockedAt;
+
+    @Column(name = "last_login")
+    private LocalDateTime lastLogin;
+
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
 
     @ManyToOne
     @JoinColumn(name = "current_group_id")

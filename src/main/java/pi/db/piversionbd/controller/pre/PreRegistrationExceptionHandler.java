@@ -1,4 +1,4 @@
-package pi.db.piversionbd.controller;
+package pi.db.piversionbd.controller.pre;
 
 import io.swagger.v3.oas.annotations.Hidden;
 import org.springframework.http.HttpStatus;

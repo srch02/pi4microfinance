@@ -1,4 +1,4 @@
-package pi.db.piversionbd.repositories.score;
+package pi.db.piversionbd.repository.score;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import pi.db.piversionbd.entities.score.ClaimScoring;

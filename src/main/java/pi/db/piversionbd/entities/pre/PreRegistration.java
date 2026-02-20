@@ -45,4 +45,3 @@ public class PreRegistration {
     @OneToOne(mappedBy = "preRegistration")
     private Member member;
 }
-

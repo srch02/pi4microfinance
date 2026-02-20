@@ -1,4 +1,4 @@
-package pi.db.piversionbd.controllers.score;
+package pi.db.piversionbd.controller.score;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -6,6 +6,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import pi.db.piversionbd.dto.score.ClaimCreateRequest;
+import pi.db.piversionbd.dto.score.ClaimResponse;
 import pi.db.piversionbd.entities.score.Claim;
 import pi.db.piversionbd.entities.score.ClaimDecisionReason;
 import pi.db.piversionbd.entities.score.ClaimStatus;
@@ -19,33 +21,33 @@ public class ClaimController {
     private final ClaimService claimService;
 
     @PostMapping
-    public ResponseEntity<pi.db.piversionbd.dto.ClaimResponse> create(
-            @RequestBody pi.db.piversionbd.dto.ClaimCreateRequest req
+    public ResponseEntity<ClaimResponse> create(
+            @RequestBody ClaimCreateRequest req
     ) {
         var created = claimService.createFromIds(req);
         return ResponseEntity.status(201).body(claimService.toResponse(created));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<pi.db.piversionbd.dto.ClaimResponse> getById(@PathVariable Long id) {
+    public ResponseEntity<ClaimResponse> getById(@PathVariable Long id) {
         var c = claimService.getById(id);
         return ResponseEntity.ok(claimService.toResponse(c));
     }
 
     @GetMapping("/{id}/details")
-    public ResponseEntity<pi.db.piversionbd.dto.ClaimResponse> getDetailsById(@PathVariable Long id) {
+    public ResponseEntity<ClaimResponse> getDetailsById(@PathVariable Long id) {
         Claim c = claimService.getDetailsById(id);
         return ResponseEntity.ok(claimService.toResponse(c));
     }
 
     @GetMapping("/by-number/{claimNumber}")
-    public ResponseEntity<pi.db.piversionbd.dto.ClaimResponse> getByClaimNumber(@PathVariable String claimNumber) {
+    public ResponseEntity<ClaimResponse> getByClaimNumber(@PathVariable String claimNumber) {
         Claim c = claimService.getByClaimNumber(claimNumber);
         return ResponseEntity.ok(claimService.toResponse(c));
     }
 
     @GetMapping
-    public ResponseEntity<Page<pi.db.piversionbd.dto.ClaimResponse>> getAll(
+    public ResponseEntity<Page<ClaimResponse>> getAll(
             @RequestParam(required = false) ClaimStatus status,
             @PageableDefault(size = 10, sort = "createdAt") Pageable pageable
     ) {
@@ -56,13 +58,13 @@ public class ClaimController {
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<pi.db.piversionbd.dto.ClaimResponse> update(@PathVariable Long id, @RequestBody Claim request) {
+    public ResponseEntity<ClaimResponse> update(@PathVariable Long id, @RequestBody Claim request) {
         Claim updated = claimService.update(id, request);
         return ResponseEntity.ok(claimService.toResponse(updated));
     }
 
     @PatchMapping("/{id}/status")
-    public ResponseEntity<pi.db.piversionbd.dto.ClaimResponse> updateStatus(
+    public ResponseEntity<ClaimResponse> updateStatus(
             @PathVariable Long id,
             @RequestBody ClaimStatusUpdateRequest request
     ) {

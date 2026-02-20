@@ -8,8 +8,7 @@ import pi.db.piversionbd.dto.pre.PreRegistrationRequestDTO;
 import pi.db.piversionbd.entities.pre.FinancialStabilityLevel;
 import pi.db.piversionbd.entities.pre.PreRegistrationStatus;
 import pi.db.piversionbd.service.pre.IPreRegistrationService;
-import pi.db.piversionbd.controller.pre.PreRegistrationController;
-import pi.db.piversionbd.controller.PreRegistrationException;
+import pi.db.piversionbd.controller.pre.PreRegistrationException;
 
 import static org.junit.jupiter.api.Assertions.*;
 

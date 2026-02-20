@@ -1,17 +1,17 @@
-package pi.db.piversionbd.services.score;
+package pi.db.piversionbd.service.score;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import pi.db.piversionbd.dto.ClaimCreateRequest;
-import pi.db.piversionbd.dto.ClaimResponse;
+import pi.db.piversionbd.dto.score.ClaimCreateRequest;
+import pi.db.piversionbd.dto.score.ClaimResponse;
 import pi.db.piversionbd.entities.groups.Group;
 import pi.db.piversionbd.entities.groups.Member;
 import pi.db.piversionbd.entities.score.*;
-import pi.db.piversionbd.exceptions.NotFoundException;
-import pi.db.piversionbd.repositories.score.ClaimRepository;
+import pi.db.piversionbd.exception.ResourceNotFoundException;
+import pi.db.piversionbd.repository.score.ClaimRepository;
 import pi.db.piversionbd.repository.groups.GroupRepository;
 import pi.db.piversionbd.repository.groups.MemberRepository;
 
@@ -53,13 +53,13 @@ public class ClaimService {
     @Transactional(readOnly = true)
     public Claim getById(Long id) {
         return claimRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("Claim introuvable: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Claim introuvable: " + id));
     }
 
     @Transactional(readOnly = true)
     public Claim getDetailsById(Long id) {
         return claimRepository.findDetailsById(id)
-                .orElseThrow(() -> new NotFoundException("Claim introuvable: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Claim introuvable: " + id));
     }
 
     @Transactional(readOnly = true)
@@ -75,7 +75,7 @@ public class ClaimService {
     @Transactional(readOnly = true)
     public Claim getByClaimNumber(String claimNumber) {
         return claimRepository.findByClaimNumber(claimNumber)
-                .orElseThrow(() -> new NotFoundException("Claim introuvable pour claimNumber: " + claimNumber));
+                .orElseThrow(() -> new ResourceNotFoundException("Claim introuvable pour claimNumber: " + claimNumber));
     }
 
     public Claim update(Long id, Claim request) {
@@ -118,10 +118,10 @@ public class ClaimService {
             throw new IllegalArgumentException("claimNumber obligatoire");
 
         Member member = memberRepository.findById(req.memberId)
-                .orElseThrow(() -> new NotFoundException("Member introuvable: " + req.memberId));
+                .orElseThrow(() -> new ResourceNotFoundException("Member introuvable: " + req.memberId));
 
         Group group = groupRepository.findById(req.groupId)
-                .orElseThrow(() -> new NotFoundException("Group introuvable: " + req.groupId));
+                .orElseThrow(() -> new ResourceNotFoundException("Group introuvable: " + req.groupId));
 
         Claim c = new Claim();
         c.setMember(member);

@@ -227,10 +227,7 @@ public class MembershipServiceImp implements IMembershipService {
         return ensureCoverageComputed(m);
     }
 
-    /**
-     * Backfill coverage for legacy memberships where consultations_limit or annual_limit is null.
-     * Uses the current packageType and monthlyAmount to compute limits, then persists once.
-     */
+
     private Membership ensureCoverageComputed(Membership m) {
         if (m == null) return null;
         if ((m.getAnnualLimit() == null || m.getConsultationsLimit() == null)

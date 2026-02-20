@@ -16,6 +16,7 @@ import pi.db.piversionbd.entities.groups.Group;
 import pi.db.piversionbd.repository.groups.GroupPoolRepository;
 import pi.db.piversionbd.service.groups.IMembershipService.AddMembershipResult;
 import pi.db.piversionbd.service.groups.IGroupService;
+import pi.db.piversionbd.service.groups.IMemberService;
 import pi.db.piversionbd.service.groups.IMembershipService;
 
 import java.util.List;
@@ -28,6 +29,7 @@ import java.util.stream.Collectors;
 public class GroupController {
 
     private final IGroupService groupService;
+    private final IMemberService memberService;
     private final IMembershipService membershipService;
     private final GroupPoolRepository groupPoolRepository;
 
@@ -104,7 +106,11 @@ public class GroupController {
             @Parameter(
                     description = "Join policy. Placeholder: public. Available values: public, private",
                     schema = @Schema(allowableValues = {"public", "private"}, example = "public"))
-            @RequestParam(required = false) String joinPolicy) {
+            @RequestParam(required = false) String joinPolicy,
+            @Parameter(
+                    description = "Creator member ID (the member who creates the group). Placeholder: 1",
+                    schema = @Schema(example = "1"))
+            @RequestParam(required = false) Long creatorMemberId) {
 
         Group group = new Group();
         group.setName(name);
@@ -113,6 +119,9 @@ public class GroupController {
         group.setMinMembers(minMembers);
         group.setMaxMembers(maxMembers);
         group.setJoinPolicy(joinPolicy);
+        if (creatorMemberId != null) {
+            group.setCreator(memberService.getMemberById(creatorMemberId));
+        }
 
         Group created = groupService.createGroup(group);
         return ResponseEntity.status(HttpStatus.CREATED)

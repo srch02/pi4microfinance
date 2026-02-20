@@ -16,7 +16,7 @@ public class OpenApiConfig {
             "DocumentUpload", "ExcludedCondition", "BlacklistEntry", "AdminReviewQueueItem",
             "Group", "Membership", "Payment", "Claim", "AdminUser", "GroupPool",
             "Consultation", "Doctor", "Medication", "HealthTrackingEntry", "PharmacyRecommendation",
-            "MemberChurnForecast", "RetentionIntervention", "PlatformKpiSnapshot", "SystemAlert",
+            "MemberChurnForecast", "PlatformKpiSnapshot",
             "AdherenceTracking", "MemberReward", "RewardCatalogItem", "ClaimScoring"
     );
 

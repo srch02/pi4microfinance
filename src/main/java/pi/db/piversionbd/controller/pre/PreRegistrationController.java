@@ -10,7 +10,6 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import pi.db.piversionbd.controller.PreRegistrationException;
 import pi.db.piversionbd.dto.pre.CinOcrResponseDTO;
 import pi.db.piversionbd.dto.pre.MedicalHistoryAssessmentDTO;
 import pi.db.piversionbd.dto.pre.MedicalHistoryQaRequestDTO;

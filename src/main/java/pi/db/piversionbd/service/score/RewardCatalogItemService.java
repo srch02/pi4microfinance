@@ -1,4 +1,4 @@
-package pi.db.piversionbd.services.score;
+package pi.db.piversionbd.service.score;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -6,8 +6,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pi.db.piversionbd.entities.score.RewardCatalogItem;
-import pi.db.piversionbd.exceptions.NotFoundException;
-import pi.db.piversionbd.repositories.score.RewardCatalogItemRepository;
+import pi.db.piversionbd.exception.ResourceNotFoundException;
+import pi.db.piversionbd.repository.score.RewardCatalogItemRepository;
 
 @Service
 @RequiredArgsConstructor
@@ -33,7 +33,7 @@ public class RewardCatalogItemService {
     @Transactional(readOnly = true)
     public RewardCatalogItem getById(Long id) {
         return rewardCatalogItemRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("RewardCatalogItem introuvable: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("RewardCatalogItem introuvable: " + id));
     }
 
     @Transactional(readOnly = true)

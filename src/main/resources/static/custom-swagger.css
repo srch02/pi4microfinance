@@ -44,3 +44,59 @@
     background-color: #e3f2fd !important;
     border-left: 4px solid #1a237e !important;
   }
+
+  /* --- Module organization (dividers + color accents) --- */
+  .swagger-ui .pi-module-divider {
+    margin: 18px 0 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    background: #ffffff;
+    color: #0f172a;
+  }
+
+  .swagger-ui .pi-module-divider[data-pi-module="module1"] {
+    border-left: 5px solid #16a34a;
+    background: rgba(22, 163, 74, 0.08);
+  }
+  .swagger-ui .pi-module-divider[data-pi-module="module5"] {
+    border-left: 5px solid #2563eb;
+    background: rgba(37, 99, 235, 0.08);
+  }
+  .swagger-ui .pi-module-divider[data-pi-module="score"] {
+    border-left: 5px solid #7c3aed;
+    background: rgba(124, 58, 237, 0.08);
+  }
+  .swagger-ui .pi-module-divider[data-pi-module="admin"] {
+    border-left: 5px solid #ea580c;
+    background: rgba(234, 88, 12, 0.08);
+  }
+
+  /* Add a subtle module accent bar to each tag section */
+  .swagger-ui .opblock-tag-section {
+    position: relative;
+  }
+  .swagger-ui .opblock-tag-section::before {
+    content: "";
+    position: absolute;
+    left: -10px;
+    top: 6px;
+    bottom: 6px;
+    width: 4px;
+    border-radius: 999px;
+    background: rgba(100, 116, 139, 0.35);
+  }
+  .swagger-ui .opblock-tag-section[data-pi-module="module1"]::before {
+    background: #16a34a;
+  }
+  .swagger-ui .opblock-tag-section[data-pi-module="module5"]::before {
+    background: #2563eb;
+  }
+  .swagger-ui .opblock-tag-section[data-pi-module="score"]::before {
+    background: #7c3aed;
+  }
+  .swagger-ui .opblock-tag-section[data-pi-module="admin"]::before {
+    background: #ea580c;
+  }
