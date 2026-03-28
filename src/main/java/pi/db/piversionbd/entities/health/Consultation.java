@@ -1,12 +1,9 @@
 package pi.db.piversionbd.entities.health;
 
 import jakarta.persistence.*;
-import lombok.Data;
 import pi.db.piversionbd.entities.groups.Member;
-import pi.db.piversionbd.entities.groups.Payment;
-
+import lombok.Data;
 import java.time.LocalDateTime;
-import java.util.List;
 
 @Entity
 @Table(name = "CONSULTATIONS")
@@ -18,34 +15,28 @@ public class Consultation {
     private Long id;
 
     @ManyToOne
-    @JoinColumn(name = "member_id")
+    @JoinColumn(name = "member_id", nullable = false)
     private Member member;
 
     @ManyToOne
-    @JoinColumn(name = "doctor_id")
+    @JoinColumn(name = "doctor_id", nullable = false)
     private Doctor doctor;
 
-    @Column(name = "scheduled_time")
-    private LocalDateTime scheduledTime;
+    @Column(name = "lien", nullable = false)
+    private String lien;
 
     @Enumerated(EnumType.STRING)
-    private ConsultationStatus status;
+    @Column(name = "type_consultation", nullable = false)
+    private TypeConsultation typeConsultation;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "etat_consultation", nullable = false)
+    private EtatConsultation etatConsultation;
 
-    @Lob
-    private String diagnosis;
+    @Column(name = "date_consultation")
+    private LocalDateTime dateConsultation;
 
-    @Lob
-    private String prescription;
-
-    @Column(name = "is_telemedicine")
-    private Boolean telemedicine;
-
-    @ManyToMany
-    private List<Medication> medications;
-    @OneToOne
-    @JoinColumn(name = "payment_id")
-    private Payment payment;
-
+    @Column(name = "notes")
+    private String notes;
 }
 

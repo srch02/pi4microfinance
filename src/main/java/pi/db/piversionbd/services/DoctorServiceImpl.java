@@ -1,40 +1,58 @@
 package pi.db.piversionbd.services;
 
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
 import pi.db.piversionbd.entities.health.Doctor;
+import pi.db.piversionbd.entities.health.Specialite;
 import pi.db.piversionbd.repositories.DoctorRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Optional;
 
 @Service
-@RequiredArgsConstructor
-public class DoctorServiceImpl implements DoctorService {
+public class DoctorServiceImpl implements IDoctorService {
 
-    private final DoctorRepository doctorRepository;
+    @Autowired
+    private DoctorRepository doctorRepository;
 
     @Override
-    public Doctor createDoctor(Doctor doctor) {
+    public Doctor saveDoctors(Doctor doctor) {
         return doctorRepository.save(doctor);
     }
 
     @Override
-    public List<Doctor> getAllDoctors() {
-        return (List<Doctor>) doctorRepository.findAll();
+    public Optional<Doctor> getDoctorById(Long id) {
+        return doctorRepository.findById(id);
     }
 
     @Override
-    public Doctor getDoctorById(Long id) {
-        return doctorRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Doctor not found"));
+    public List<Doctor> getAllDoctors() {
+        return doctorRepository.findAll();
     }
 
     @Override
     public Doctor updateDoctor(Long id, Doctor doctor) {
-        Doctor existing = getDoctorById(id);
-        existing.setName(doctor.getName());
-        existing.setSpecialty(doctor.getSpecialty());
-        return doctorRepository.save(existing);
+        Optional<Doctor> existingDoctor = doctorRepository.findById(id);
+        if (existingDoctor.isPresent()) {
+            Doctor d = existingDoctor.get();
+            if (doctor.getName() != null) {
+                d.setName(doctor.getName());
+            }
+            if (doctor.getEmail() != null) {
+                d.setEmail(doctor.getEmail());
+            }
+            if (doctor.getPassword() != null) {
+                d.setPassword(doctor.getPassword());
+            }
+            if (doctor.getTypeDoctor() != null) {
+                d.setTypeDoctor(doctor.getTypeDoctor());
+            }
+            if (doctor.getSpecialite() != null) {
+                d.setSpecialite(doctor.getSpecialite());
+            }
+            return doctorRepository.save(d);
+        }
+        return null;
     }
 
     @Override
@@ -43,8 +61,13 @@ public class DoctorServiceImpl implements DoctorService {
     }
 
     @Override
-    public List<Doctor> findBySpecialty(String speciality) {
-        return doctorRepository.findBySpecialty(speciality);
+    public Optional<Doctor> getDoctorByEmail(String email) {
+        return doctorRepository.findByEmail(email);
+    }
+
+    @Override
+    public List<Doctor> getDoctorsBySpecialite(Specialite specialite) {
+        return doctorRepository.findBySpecialite(specialite);
     }
 }
 

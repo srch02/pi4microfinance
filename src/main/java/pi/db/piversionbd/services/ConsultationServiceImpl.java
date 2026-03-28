@@ -1,62 +1,96 @@
 package pi.db.piversionbd.services;
 
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-import pi.db.piversionbd.entities.groups.Member;
 import pi.db.piversionbd.entities.health.Consultation;
-import pi.db.piversionbd.entities.health.ConsultationStatus;
-import pi.db.piversionbd.entities.health.Doctor;
+import pi.db.piversionbd.entities.health.EtatConsultation;
 import pi.db.piversionbd.repositories.ConsultationRepository;
-import pi.db.piversionbd.repositories.DoctorRepository;
-import pi.db.piversionbd.repositories.MemberRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.Optional;
 
 @Service
-@RequiredArgsConstructor
-public class ConsultationServiceImpl implements ConsultationService {
+public class ConsultationServiceImpl implements IConsultationService {
 
-    private final ConsultationRepository consultationRepository;
-    private final DoctorRepository doctorRepository;
-    private final MemberRepository memberRepository;
+    private static final Logger logger = LoggerFactory.getLogger(ConsultationServiceImpl.class);
+
+    @Autowired
+    private ConsultationRepository consultationRepository;
+
 
     @Override
-    public Consultation bookConsultation(Long memberId, Long doctorId, Consultation consultation) {
-
-        Doctor doctor = doctorRepository.findById(doctorId)
-                .orElseThrow(() -> new RuntimeException("Doctor not found"));
-        Member member = memberRepository.findById(memberId)
-                .orElseThrow(() -> new RuntimeException("Member not found"));
-
-        consultation.setDoctor(doctor);
-        consultation.setMember(member);
-        consultation.setStatus(ConsultationStatus.SCHEDULED);
-
-        return consultationRepository.save(consultation);
+    public Consultation saveConsultation(Consultation consultation) {
+        Consultation savedConsultation = consultationRepository.save(consultation);
+        logger.info("Consultation sauvegardée avec succès pour l'ID: " + savedConsultation.getId());
+        return savedConsultation;
     }
 
     @Override
-    public List<Consultation> getMemberConsultations(Long memberId) {
-        return consultationRepository.findByMemberId(memberId);
+    public Optional<Consultation> getConsultationById(Long id) {
+        return consultationRepository.findById(id);
     }
 
     @Override
-    public List<Consultation> getDoctorConsultations(Long doctorId) {
-        return consultationRepository.findByDoctorId(doctorId);
+    public List<Consultation> getAllConsultations() {
+        return consultationRepository.findAll();
     }
 
     @Override
-    public Consultation updateStatus(Long consultationId, ConsultationStatus status) {
-        Consultation consultation = consultationRepository.findById(consultationId)
-                .orElseThrow(() -> new RuntimeException("Consultation not found"));
-
-        consultation.setStatus(status);
-        return consultationRepository.save(consultation);
+    public Consultation updateConsultation(Long id, Consultation consultation) {
+        Optional<Consultation> existingConsultation = consultationRepository.findById(id);
+        if (existingConsultation.isPresent()) {
+            Consultation c = existingConsultation.get();
+            if (consultation.getMember() != null) {
+                c.setMember(consultation.getMember());
+            }
+            if (consultation.getDoctor() != null) {
+                c.setDoctor(consultation.getDoctor());
+            }
+            if (consultation.getLien() != null) {
+                c.setLien(consultation.getLien());
+            }
+            if (consultation.getTypeConsultation() != null) {
+                c.setTypeConsultation(consultation.getTypeConsultation());
+            }
+            if (consultation.getEtatConsultation() != null) {
+                c.setEtatConsultation(consultation.getEtatConsultation());
+            }
+            if (consultation.getDateConsultation() != null) {
+                c.setDateConsultation(consultation.getDateConsultation());
+            }
+            if (consultation.getNotes() != null) {
+                c.setNotes(consultation.getNotes());
+            }
+            return consultationRepository.save(c);
+        }
+        return null;
     }
 
     @Override
     public void deleteConsultation(Long id) {
         consultationRepository.deleteById(id);
+    }
+
+    @Override
+    public List<Consultation> getConsultationsByMemberId(Long memberId) {
+        return consultationRepository.findByMemberId(memberId);
+    }
+
+    @Override
+    public List<Consultation> getConsultationsByDoctorId(Long doctorId) {
+        return consultationRepository.findByDoctorId(doctorId);
+    }
+
+    @Override
+    public List<Consultation> getConsultationsByEtat(EtatConsultation etatConsultation) {
+        return consultationRepository.findByEtatConsultation(etatConsultation);
+    }
+
+    @Override
+    public List<Consultation> getConsultationsByMemberIdAndEtat(Long memberId, EtatConsultation etatConsultation) {
+        return consultationRepository.findByMemberIdAndEtatConsultation(memberId, etatConsultation);
     }
 }
 

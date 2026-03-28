@@ -2,7 +2,6 @@ package pi.db.piversionbd.entities.groups;
 
 import jakarta.persistence.*;
 import lombok.Data;
-import pi.db.piversionbd.entities.health.Consultation;
 
 @Entity
 @Table(name = "PAYMENTS")
@@ -32,7 +31,6 @@ public class Payment {
     @Column(name = "national_fund")
     private Float nationalFund;
 
-    @OneToOne
-    private Consultation consultation;
+
 }
 
