@@ -12,6 +12,7 @@ import pi.db.piversionbd.repositories.score.ClaimScoringRepository;
 import pi.db.piversionbd.repositories.score.MemberRepository;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Service
@@ -24,52 +25,58 @@ public class ScoringBusinessService {
     private final MemberRepository memberRepository;
     private final AdherenceTrackingRepository adherenceTrackingRepository;
 
-    // ===== Constantes métier =====
+    // ===== Seuils de décision =====
     private static final BigDecimal AUTO_APPROVAL_THRESHOLD = BigDecimal.valueOf(80);
     private static final BigDecimal MANUAL_REVIEW_THRESHOLD = BigDecimal.valueOf(50);
     private static final float ADHERENCE_BONUS = 5f;
 
+    // ===== Maximums par sous-score =====
+    private static final int MAX_RELIABILITY_SCORE = 20;
+    private static final int MAX_MEDICAL_SCORE = 30;
+    private static final int MAX_DOCUMENT_SCORE = 25;
+    private static final int MAX_COMPLIANCE_SCORE = 25;
+
     /**
      * 1) CALCUL DU SCORE
      */
-    @Transactional
     public ClaimScoring calculateScore(Long claimId) {
         Claim claim = findClaimOrThrow(claimId);
 
-        // Si la claim est déjà dans un état final, on évite de recalculer (règle métier simple)
         if (isFinalDecisionStatus(claim.getStatus())) {
             throw new IllegalStateException("La claim a déjà une décision finale, recalcul non autorisé.");
         }
 
-        // Récupérer existant ou créer nouveau
         ClaimScoring scoring = claimScoringRepository.findByClaimId(claimId)
                 .orElseGet(ClaimScoring::new);
 
         scoring.setClaim(claim);
 
-        // --- logique scoring (exemple statique) ---
-        BigDecimal reliability = BigDecimal.valueOf(20);
-        BigDecimal medical = BigDecimal.valueOf(30);
-        BigDecimal document = BigDecimal.valueOf(25);
-        BigDecimal compliance = BigDecimal.valueOf(15);
+        BigDecimal reliability = calculateReliabilityScore(claim);
+        BigDecimal medical = calculateMedicalScore(claim);
+        BigDecimal document = calculateDocumentScore(claim);
+        BigDecimal compliance = calculateComplianceScore(claim);
 
-        BigDecimal total = reliability.add(medical)
+        BigDecimal total = reliability
+                .add(medical)
                 .add(document)
                 .add(compliance);
+
+        boolean excludedConditionDetected = hasExcludedCondition(claim);
+        String fraudIndicators = buildFraudIndicators(claim);
 
         scoring.setReliabilityScore(reliability);
         scoring.setMedicalScore(medical);
         scoring.setDocumentScore(document);
         scoring.setComplianceScore(compliance);
         scoring.setTotalScore(total);
+        scoring.setExcludedConditionDetected(excludedConditionDetected);
+        scoring.setFraudIndicators(fraudIndicators);
         scoring.setScoredAt(LocalDateTime.now());
-        // -----------------------------------------
 
-        // Snapshot côté claim
         claim.setFinalScoreSnapshot(total);
         claim.setStatus(ClaimStatus.SCORED);
 
-        // (optionnel) on nettoie d'anciennes infos de décision si on rescrore avant décision finale
+        // reset décision précédente si on rescrore avant décision finale
         claim.setDecisionReason(null);
         claim.setDecisionAt(null);
 
@@ -84,7 +91,6 @@ public class ScoringBusinessService {
     public Claim autoDecision(Long claimId) {
         Claim claim = findClaimOrThrow(claimId);
 
-        // Si déjà en décision finale => on retourne tel quel (idempotence simple)
         if (isFinalDecisionStatus(claim.getStatus())) {
             return claim;
         }
@@ -100,7 +106,6 @@ public class ScoringBusinessService {
 
         } else if (score.compareTo(MANUAL_REVIEW_THRESHOLD) >= 0) {
             claim.setStatus(ClaimStatus.MANUAL_REVIEW);
-            // pas de raison de rejet/approval auto dans ce cas
             claim.setDecisionReason(null);
 
         } else {
@@ -119,7 +124,6 @@ public class ScoringBusinessService {
     public AdherenceTracking rewardMember(Long claimId) {
         Claim claim = findClaimOrThrow(claimId);
 
-        // Validation métier: bonus seulement si APPROVED_AUTO
         if (claim.getStatus() != ClaimStatus.APPROVED_AUTO) {
             throw new IllegalStateException(
                     "Bonus non autorisé: la claim doit être APPROVED_AUTO.");
@@ -153,19 +157,14 @@ public class ScoringBusinessService {
 
     /**
      * 4) PROCESS COMPLET CLAIM
-     * - calcul score
-     * - décision auto
-     * - bonus si APPROVED_AUTO
      */
     public Claim processClaim(Long claimId) {
         Claim existingClaim = findClaimOrThrow(claimId);
 
-        // Idempotence simple: si déjà décidé (final), on ne retrait e pas
         if (isFinalDecisionStatus(existingClaim.getStatus())) {
             return existingClaim;
         }
 
-        // Si pas encore scorée, on calcule
         if (existingClaim.getStatus() != ClaimStatus.SCORED
                 || existingClaim.getFinalScoreSnapshot() == null) {
             calculateScore(claimId);
@@ -174,15 +173,121 @@ public class ScoringBusinessService {
         Claim claim = autoDecision(claimId);
 
         if (claim.getStatus() == ClaimStatus.APPROVED_AUTO) {
-            // NB: sans check "déjà récompensé" en repository, un appel direct /reward peut doubler le bonus.
-            // Ici, le process reste sûr grâce à l'idempotence sur statut final (retour direct plus haut).
             rewardMember(claimId);
         }
 
         return claim;
     }
 
-    // ===== Helpers métier =====
+    // =========================================================
+    // =============== CALCUL DES SOUS-SCORES ==================
+    // =========================================================
+
+    /**
+     * Reliability sur 20
+     */
+    private BigDecimal calculateReliabilityScore(Claim claim) {
+        int score = 0;
+
+        Member member = claim.getMember();
+
+        // membre présent
+        if (member != null) {
+            score += 5;
+        }
+
+        // score d’adhérence correct
+        if (member != null && member.getAdherenceScore() != null) {
+            if (member.getAdherenceScore() >= 80) {
+                score += 10;
+            } else if (member.getAdherenceScore() >= 50) {
+                score += 5;
+            }
+        }
+
+        // pas d’indicateur de fraude
+        if (!hasFraudIndicators(claim)) {
+            score += 5;
+        }
+
+        return BigDecimal.valueOf(Math.min(score, MAX_RELIABILITY_SCORE));
+    }
+
+    /**
+     * Medical sur 30
+     */
+    private BigDecimal calculateMedicalScore(Claim claim) {
+        int score = 0;
+
+        // Exemple: adapte ces getters à ton vrai modèle
+        if (hasDiagnosis(claim)) {
+            score += 10;
+        }
+
+        if (hasTreatmentDate(claim)) {
+            score += 5;
+        }
+
+        if (hasMedicalJustification(claim)) {
+            score += 10;
+        }
+
+        if (isMedicalDataConsistent(claim)) {
+            score += 5;
+        }
+
+        return BigDecimal.valueOf(Math.min(score, MAX_MEDICAL_SCORE));
+    }
+
+    /**
+     * Document sur 25
+     */
+    private BigDecimal calculateDocumentScore(Claim claim) {
+        int score = 0;
+
+        if (hasAnyDocument(claim)) {
+            score += 10;
+        }
+
+        if (hasIdentityDocument(claim)) {
+            score += 5;
+        }
+
+        if (hasInvoiceDocument(claim)) {
+            score += 5;
+        }
+
+        if (hasMedicalCertificateDocument(claim)) {
+            score += 5;
+        }
+
+        return BigDecimal.valueOf(Math.min(score, MAX_DOCUMENT_SCORE));
+    }
+
+    /**
+     * Compliance sur 25
+     */
+    private BigDecimal calculateComplianceScore(Claim claim) {
+        int score = 0;
+
+        if (isWithinCoveragePeriod(claim)) {
+            score += 10;
+        }
+
+        if (isAmountWithinAllowedLimit(claim)) {
+            score += 10;
+        }
+
+        if (!hasExcludedCondition(claim)) {
+            score += 5;
+        }
+
+        return BigDecimal.valueOf(Math.min(score, MAX_COMPLIANCE_SCORE));
+    }
+
+    // =========================================================
+    // ==================== HELPERS METIER =====================
+    // =========================================================
 
     private Claim findClaimOrThrow(Long claimId) {
         return claimRepository.findById(claimId)
@@ -193,5 +298,113 @@ public class ScoringBusinessService {
         return status == ClaimStatus.APPROVED_AUTO
                 || status == ClaimStatus.MANUAL_REVIEW
                 || status == ClaimStatus.REJECTED_LOW_SCORE;
+    }
+
+    // =========================================================
+    // =========== METHODES A ADAPTER A TON MODELE ============
+    // =========================================================
+
+    private boolean hasFraudIndicators(Claim claim) {
+        // Exemples de règles:
+        // - montant anormalement élevé
+        // - doublon possible
+        // - données incohérentes
+        return isAmountSuspicious(claim) || isPotentialDuplicate(claim) || !isClaimDataConsistent(claim);
+    }
+
+    private String buildFraudIndicators(Claim claim) {
+        StringBuilder sb = new StringBuilder();
+
+        if (isAmountSuspicious(claim)) {
+            sb.append("Montant suspect; ");
+        }
+        if (isPotentialDuplicate(claim)) {
+            sb.append("Doublon potentiel; ");
+        }
+        if (!isClaimDataConsistent(claim)) {
+            sb.append("Données incohérentes; ");
+        }
+
+        return sb.toString().trim();
+    }
+
+    private boolean hasDiagnosis(Claim claim) {
+        // Exemple à adapter:
+        // return claim.getDiagnosis() != null && !claim.getDiagnosis().isBlank();
+        return true;
+    }
+
+    private boolean hasTreatmentDate(Claim claim) {
+        // Exemple à adapter:
+        // return claim.getTreatmentDate() != null;
+        return true;
+    }
+
+    private boolean hasMedicalJustification(Claim claim) {
+        // Exemple à adapter:
+        // return claim.getMedicalReport() != null || claim.getPrescription() != null;
+        return true;
+    }
+
+    private boolean isMedicalDataConsistent(Claim claim) {
+        // Exemple à adapter selon règles métier
+        return true;
+    }
+
+    private boolean hasAnyDocument(Claim claim) {
+        // Exemple à adapter:
+        // return claim.getDocuments() != null && !claim.getDocuments().isEmpty();
+        return true;
+    }
+
+    private boolean hasIdentityDocument(Claim claim) {
+        // Exemple à adapter
+        return true;
+    }
+
+    private boolean hasInvoiceDocument(Claim claim) {
+        // Exemple à adapter
+        return true;
+    }
+
+    private boolean hasMedicalCertificateDocument(Claim claim) {
+        // Exemple à adapter
+        return true;
+    }
+
+    private boolean isWithinCoveragePeriod(Claim claim) {
+        // Exemple à adapter:
+        // vérifier date de soin / date sinistre par rapport à la couverture
+        return true;
+    }
+
+    private boolean isAmountWithinAllowedLimit(Claim claim) {
+        // Exemple à adapter:
+        // return claim.getClaimAmount() != null &&
+        //        claim.getClaimAmount().compareTo(BigDecimal.valueOf(5000)) <= 0;
+        return true;
+    }
+
+    private boolean hasExcludedCondition(Claim claim) {
+        // Exemple à adapter:
+        // vérifier si la pathologie / acte / situation est exclu(e) du contrat
+        return false;
+    }
+
+    private boolean isAmountSuspicious(Claim claim) {
+        // Exemple à adapter
+        return false;
+    }
+
+    private boolean isPotentialDuplicate(Claim claim) {
+        // Exemple à adapter:
+        // recherche d’une claim proche pour le même member, même date, même montant
+        return false;
+    }
+
+    private boolean isClaimDataConsistent(Claim claim) {
+        // Exemple à adapter:
+        // cohérence entre montant, dates, docs, bénéficiaire, etc.
+        return true;
     }
 }

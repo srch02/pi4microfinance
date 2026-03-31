@@ -7,10 +7,12 @@ import org.springframework.data.web.PageableDefault;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+import pi.db.piversionbd.dto.ClaimResponse;
 import pi.db.piversionbd.entities.score.Claim;
 import pi.db.piversionbd.entities.score.ClaimDecisionReason;
 import pi.db.piversionbd.entities.score.ClaimStatus;
 import pi.db.piversionbd.services.score.ClaimService;
+import pi.db.piversionbd.dto.ClaimCreateRequest;
 
 import java.net.URI;
 
@@ -30,9 +32,8 @@ public class ClaimController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<pi.db.piversionbd.dto.ClaimResponse> getById(@PathVariable Long id) {
-        var c = claimService.getById(id);
-        return ResponseEntity.ok(claimService.toResponse(c));
+    public ResponseEntity<ClaimResponse> getById(@PathVariable Long id) {
+        return ResponseEntity.ok(claimService.getById(id));
     }
 
     @GetMapping("/{id}/details")

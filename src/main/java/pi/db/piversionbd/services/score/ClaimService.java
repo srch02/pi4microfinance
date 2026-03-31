@@ -52,9 +52,11 @@ public class ClaimService {
     }
 
     @Transactional(readOnly = true)
-    public Claim getById(Long id) {
-        return claimRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("Claim introuvable: " + id));
+    public ClaimResponse getById(Long id) {
+        Claim claim = claimRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Claim introuvable"));
+
+        return toResponse(claim);
     }
 
     @Transactional(readOnly = true)
@@ -78,9 +80,12 @@ public class ClaimService {
         return claimRepository.findByClaimNumber(claimNumber)
                 .orElseThrow(() -> new NotFoundException("Claim introuvable pour claimNumber: " + claimNumber));
     }
-
+    private Claim findEntityById(Long id) {
+        return claimRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Claim introuvable"));
+    }
     public Claim update(Long id, Claim request) {
-        Claim existing = getById(id);
+        Claim existing = findEntityById(id);
 
         // Champs modifiables en CRUD simple
         existing.setAmountRequested(request.getAmountRequested());
@@ -99,7 +104,7 @@ public class ClaimService {
     }
 
     public Claim updateStatus(Long id, ClaimStatus status, ClaimDecisionReason reason, String comment) {
-        Claim claim = getById(id);
+        Claim claim = findEntityById(id);
         claim.setStatus(status);
         claim.setDecisionReason(reason);
         claim.setDecisionComment(comment);
@@ -108,7 +113,7 @@ public class ClaimService {
     }
 
     public void delete(Long id) {
-        Claim claim = getById(id);
+        Claim claim = findEntityById(id);
         claimRepository.delete(claim);
     }
     @Transactional

@@ -70,6 +70,7 @@ public class Claim {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
+    @JsonIgnore
     @OneToOne(mappedBy = "claim")
     private ClaimScoring claimScoring;
 
