@@ -30,8 +30,8 @@ class PreRegistrationControllerTest {
     }
 
     @Test
-    @DisplayName("Soumission valide retourne succès et prix calculé")
-    void submitPreRegistration_validRequest_returnsSuccessAndPrice() {
+    @DisplayName("Soumission valide retourne succès, prix indicatifs et coefficient de risque")
+    void submitPreRegistration_validRequest_returnsSuccessPricingAndRiskCoefficient() {
         if (preRegistrationService == null) return;
 
         PreRegistrationRequestDTO request = new PreRegistrationRequestDTO();
@@ -46,7 +46,9 @@ class PreRegistrationControllerTest {
 
         assertTrue(response.isSuccess());
         assertNotNull(response.getPreRegistrationId());
+        assertNotNull(response.getRiskCoefficient());
         assertNotNull(response.getCalculatedPrice());
+        assertNotNull(response.getPriceBasic());
         assertEquals(PreRegistrationStatus.PENDING_REVIEW, response.getStatus());
     }
 

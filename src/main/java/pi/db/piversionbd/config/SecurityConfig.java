@@ -1,13 +1,10 @@
 package pi.db.piversionbd.config;
 
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -15,11 +12,9 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
 
 @Configuration
 @EnableWebSecurity
@@ -36,34 +31,54 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(csrf -> csrf.disable())
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(
-                        "/api/auth/**",
-                        "/api/members/auth/**",
-                        "/swagger-ui/**",
-                        "/v3/api-docs/**"
-                ).permitAll()
-                .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                .requestMatchers("/api/members/**").hasAnyRole("MEMBER", "ADMIN")
-                .anyRequest().authenticated()
-            )
-            .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider), UsernamePasswordAuthenticationFilter.class)
-            .exceptionHandling(ex -> ex
-                .accessDeniedHandler((HttpServletRequest request, HttpServletResponse response, org.springframework.security.access.AccessDeniedException accessDeniedException) -> {
-                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-                    response.setContentType("application/json");
-                    String body = "{\"message\":\"Access Denied\"}";
-                    try {
-                        response.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
-                    } catch (IOException e) {
-                        // ignore
-                    }
-                })
-            )
-            .httpBasic(Customizer.withDefaults())
-            .authenticationProvider(authenticationProvider());
+                .csrf(csrf -> csrf.disable())
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(
+                                "/api/auth/**",
+                                "/api/members/auth/**",
+                                "/api/hedera/status",
+                                "/api/claims/test-hedera/**",
+                                "/recaptcha-test.html",
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**"
+                        ).permitAll()
+                        // Public pré-inscription funnel (no JWT): submit, OCR, Q&A, uploads
+                        .requestMatchers(HttpMethod.POST, "/api/pre-registration").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/pre-registration/form").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/pre-registration/ocr/cin").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/pre-registration/medical-history/qa").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/pre-registration/*/cin/upload").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/pre-registration/medical-history/*/upload").permitAll()
+                        // Admin-only APIs
+                        .requestMatchers(
+                                "/api/admin/**",
+                                "/api/pre-registration/**",
+                                "/api/system-alerts/**",
+                                "/api/member-churn-forecasts/**",
+                                "/api/platform-kpi-snapshots/**",
+                                "/api/retention-interventions/**",
+                                "/api/chatbot/**",
+                                "/api/rewards/catalog/**",
+                                "/api/claim-scorings/**",
+                                "/api/adherence-tracking/**",
+                                "/api/member-rewards/**"
+                        ).hasRole("ADMIN")
+                        // Member app endpoints (admins keep access too)
+                        .requestMatchers(
+                                "/api/members/**",
+                                "/api/memberships/**",
+                                "/api/payments/**",
+                                "/api/claims/**",
+                                "/api/group-change-requests/**",
+                                "/api/groups/*/chat/**"
+                        ).hasAnyRole("MEMBER", "ADMIN")
+                        .anyRequest().authenticated()
+                )
+                // JWT Bearer auth must run before BasicAuthenticationFilter,
+                // otherwise Swagger will be forced into username/password prompts.
+                .addFilterBefore(new JwtAuthenticationFilter(jwtTokenProvider), BasicAuthenticationFilter.class)
+                .authenticationProvider(authenticationProvider());
         return http.build();
     }
 

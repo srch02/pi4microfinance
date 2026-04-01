@@ -20,11 +20,6 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
     Optional<Member> findByEmail(String email);
 
     boolean existsByEmail(String email);
-    Member findByPreRegistration_Id(Long preRegistrationId);
-
-    long countByEnabledFalse();
-
-    long countByLockedAtNotNull();
 
     long countByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
 }

@@ -1,13 +1,18 @@
 package pi.db.piversionbd.controller.admin;
 
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import pi.db.piversionbd.entities.admin.AdminUser;
 import pi.db.piversionbd.service.admin.AdminUserService;
 import pi.db.piversionbd.config.JwtTokenProvider;
+import pi.db.piversionbd.service.security.RecaptchaVerificationService;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -16,6 +21,21 @@ public class AdminAuthController {
 
     private final AdminUserService adminUserService;
     private final JwtTokenProvider jwtTokenProvider;
+    private final RecaptchaVerificationService recaptchaVerificationService;
+
+    @Value("${recaptcha.enabled:true}")
+    private boolean recaptchaEnabled;
+    @Value("${recaptcha.site-key:}")
+    private String recaptchaSiteKey;
+
+    /** Public config so the admin SPA can load the widget without hardcoding the site key. */
+    @GetMapping("/recaptcha-config")
+    public ResponseEntity<Map<String, Object>> recaptchaConfig() {
+        return ResponseEntity.ok(Map.of(
+                "enabled", recaptchaEnabled,
+                "siteKey", recaptchaSiteKey != null ? recaptchaSiteKey : ""
+        ));
+    }
 
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody RegisterRequest request) {
@@ -34,7 +54,18 @@ public class AdminAuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest request) {
+    public ResponseEntity<?> login(@RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+        try {
+            recaptchaVerificationService.verifyOrThrow(request.getRecaptchaToken(), ClientIp.from(httpRequest));
+        } catch (IllegalArgumentException e) {
+            ApiError err = new ApiError();
+            err.setMessage(e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(err);
+        } catch (IllegalStateException e) {
+            ApiError err = new ApiError();
+            err.setMessage(e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(err);
+        }
         try {
             AdminUser user = adminUserService.login(request.getUsername(), request.getPassword());
             String token = jwtTokenProvider.createToken(user.getUsername(), user.getRole());
@@ -67,6 +98,8 @@ public class AdminAuthController {
     public static class LoginRequest {
         private String username;
         private String password;
+        /** Token from Google reCAPTCHA (g-recaptcha-response or v3 token). */
+        private String recaptchaToken;
     }
 
     @Data

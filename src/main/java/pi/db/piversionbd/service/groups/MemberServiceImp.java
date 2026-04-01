@@ -3,14 +3,13 @@ package pi.db.piversionbd.service.groups;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pi.db.piversionbd.entities.groups.Group;
 import pi.db.piversionbd.entities.groups.Member;
+import pi.db.piversionbd.entities.pre.MedicalHistory;
 import pi.db.piversionbd.entities.pre.PreRegistration;
+import pi.db.piversionbd.entities.pre.PreRegistrationStatus;
 import pi.db.piversionbd.exception.DuplicateCinException;
 import pi.db.piversionbd.exception.ResourceNotFoundException;
 import pi.db.piversionbd.repository.pre.RiskAssessmentRepository;
@@ -19,14 +18,13 @@ import pi.db.piversionbd.repository.groups.MemberRepository;
 import pi.db.piversionbd.repository.pre.PreRegistrationRepository;
 import pi.db.piversionbd.service.score.AdherenceTrackingService;
 
-import java.security.SecureRandom;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -35,15 +33,12 @@ public class MemberServiceImp implements IMemberService {
 
     private static final Logger log = LoggerFactory.getLogger(MemberServiceImp.class);
     private static final float MAX_MONTHLY_PRICE = 70.0f;
-    private static final int MAX_FAILED_ATTEMPTS = 3;
 
     private final MemberRepository memberRepository;
     private final GroupRepository groupRepository;
     private final PreRegistrationRepository preRegistrationRepository;
     private final RiskAssessmentRepository riskAssessmentRepository;
     private final AdherenceTrackingService adherenceTrackingService;
-    private final PasswordEncoder passwordEncoder;
-    private final JavaMailSender mailSender;
 
     @Override
     public List<Member> getAllMembers() {
@@ -77,14 +72,37 @@ public class MemberServiceImp implements IMemberService {
         // CIN must exist in PreRegistration (module 5). If not found, deny creation.
         PreRegistration pre = preRegistrationRepository.findByCinNumber(member.getCinNumber())
                 .orElseThrow(() -> new ResourceNotFoundException("CIN number doesn't exist in PreRegistration: " + member.getCinNumber()));
+
+        // New lifecycle: pre-registration stops at APPROVED.
+        // Only after APPROVED can the CIN be used to create the Member.
+        if (pre.getStatus() != PreRegistrationStatus.APPROVED) {
+            throw new IllegalArgumentException(
+                "Member creation is allowed only when pre-registration is APPROVED. Current status: " + pre.getStatus());
+        }
+
+        // Safety: avoid creating a duplicate member for the same approved pre-registration.
+        if (pre.getMember() != null) {
+            throw new DuplicateCinException("This CIN is already linked to a member (pre-registration already consumed).");
+        }
+
         member.setPreRegistration(pre);
         if (member.getCinNumber() != null && memberRepository.existsByCinNumber(member.getCinNumber())) {
             throw new DuplicateCinException("CIN number already in use: " + member.getCinNumber());
         }
-        // Set prices from preinscription (RiskAssessment) so member can choose BASIC/CONFORT/PREMIUM when creating membership
+        // Personalized monthly base from pré-inscription risk (not exposed as “pricing” on the pre API).
+        // Legacy rows may still have calculatedPrice; prefer riskCoefficient when present.
         float basePrice = riskAssessmentRepository.findByPreRegistration_Id(pre.getId()).stream()
                 .findFirst()
-                .map(pi.db.piversionbd.entities.pre.RiskAssessment::getCalculatedPrice)
+                .map(ra -> {
+                    if (ra.getRiskCoefficient() != null) {
+                        return Math.min(MAX_MONTHLY_PRICE,
+                                Math.round(25.0f * ra.getRiskCoefficient() * 100f) / 100f);
+                    }
+                    if (ra.getCalculatedPrice() != null) {
+                        return ra.getCalculatedPrice();
+                    }
+                    return 25.0f;
+                })
                 .orElse(25.0f);
         if (member.getPersonalizedMonthlyPrice() == null) {
             member.setPersonalizedMonthlyPrice(basePrice);
@@ -92,7 +110,13 @@ public class MemberServiceImp implements IMemberService {
         member.setPriceBasic(Math.min(MAX_MONTHLY_PRICE, basePrice));
         member.setPriceConfort(Math.min(MAX_MONTHLY_PRICE, basePrice * 1.3f));
         member.setPricePremium(Math.min(MAX_MONTHLY_PRICE, basePrice * 1.6f));
+        float initialAdherence = computeInitialAdherenceScore(pre);
+        member.setAdherenceScore(initialAdherence);
+        if (member.getCreatedAt() == null) {
+            member.setCreatedAt(LocalDateTime.now());
+        }
         Member saved = memberRepository.save(member);
+        createInitialAdherenceEvent(saved, initialAdherence);
         resolveAdherenceScoreFromScore(saved);
         return saved;
     }
@@ -108,6 +132,16 @@ public class MemberServiceImp implements IMemberService {
         // personalizedMonthlyPrice and adherenceScore are read-only (from preinscription and score module)
         // enabled, failedLoginAttempts, lockedAt, lastLogin, createdAt are read-only (admin/system)
         existing.setCurrentGroup(updated.getCurrentGroup());
+        return memberRepository.save(existing);
+    }
+
+    @Override
+    public Member updateTelegramChatId(Long memberId, String telegramChatId) {
+        Member existing = getMemberById(memberId);
+        if (telegramChatId == null || telegramChatId.isBlank()) {
+            throw new IllegalArgumentException("telegramChatId is required");
+        }
+        existing.setTelegramChatId(telegramChatId.trim());
         return memberRepository.save(existing);
     }
 
@@ -149,102 +183,14 @@ public class MemberServiceImp implements IMemberService {
     }
 
     @Override
-    @Transactional
-    public Member register(String email, String rawPassword, String cinNumber) {
-        if (email == null || email.isBlank()) {
-            throw new IllegalArgumentException("Email requis");
-        }
-        if (rawPassword == null || rawPassword.isBlank()) {
-            throw new IllegalArgumentException("Mot de passe requis");
-        }
-        if (memberRepository.existsByEmail(email)) {
-            throw new IllegalArgumentException("Email déjà utilisé");
-        }
-        Member m = new Member();
-        m.setEmail(email);
-        m.setPassword(passwordEncoder.encode(rawPassword));
-        m.setEnabled(true);
-        m.setCreatedAt(LocalDateTime.now());
-        String cin = (cinNumber != null && !cinNumber.isBlank()) ? cinNumber : generateCinNumber();
-        m.setCinNumber(cin);
-        return memberRepository.save(m);
-    }
-
-    @Override
-    @Transactional
-    public Member login(String email, String rawPassword) {
-        Member m = memberRepository.findByEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("Utilisateur introuvable"));
-        if (Boolean.FALSE.equals(m.getEnabled())) {
-            throw new IllegalStateException("Compte désactivé");
-        }
-        if (m.getLockedAt() != null) {
-            throw new IllegalStateException("Compte bloqué après tentatives échouées");
-        }
-        if (!passwordEncoder.matches(rawPassword, m.getPassword())) {
-            int attempts = m.getFailedLoginAttempts() == null ? 0 : m.getFailedLoginAttempts();
-            attempts++;
-            m.setFailedLoginAttempts(attempts);
-            if (attempts >= MAX_FAILED_ATTEMPTS) {
-                m.setLockedAt(LocalDateTime.now());
-            }
-            memberRepository.save(m);
-            throw new IllegalArgumentException("Mot de passe invalide");
-        }
-        m.setFailedLoginAttempts(0);
-        m.setLastLogin(LocalDateTime.now());
-        return memberRepository.save(m);
-    }
-
-    @Override
-    @Transactional
-    public void resetPassword(String email) {
-        Member m = memberRepository.findByEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("Email introuvable"));
-        String newPassword = generateSecurePassword();
-        m.setPassword(passwordEncoder.encode(newPassword));
-        memberRepository.save(m);
-        sendResetPasswordEmail(m, newPassword);
-    }
-
-    @Override
     @Transactional(readOnly = true)
     public Map<String, Long> dashboardStatsForMembers() {
         Map<String, Long> stats = new HashMap<>();
         stats.put("totalMembers", memberRepository.count());
-        stats.put("blockedMembers", memberRepository.countByEnabledFalse());
-        stats.put("lockedMembers", memberRepository.countByLockedAtNotNull());
         LocalDate today = LocalDate.now();
         long newToday = memberRepository.countByCreatedAtBetween(today.atStartOfDay(), today.atTime(LocalTime.MAX));
         stats.put("newMembersToday", newToday);
         return stats;
-    }
-
-    private static String generateSecurePassword() {
-        SecureRandom random = new SecureRandom();
-        byte[] bytes = new byte[16];
-        random.nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
-    private static String generateCinNumber() {
-        SecureRandom random = new SecureRandom();
-        byte[] bytes = new byte[8];
-        random.nextBytes(bytes);
-        return "CIN-" + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
-    private void sendResetPasswordEmail(Member m, String plaintextPassword) {
-        try {
-            SimpleMailMessage message = new SimpleMailMessage();
-            message.setTo(m.getEmail());
-            message.setSubject("Réinitialisation de mot de passe - Compte Membre");
-            message.setText("Bonjour,\n\nVotre mot de passe a été réinitialisé. Nouveau mot de passe:\n\n" + plaintextPassword + "\n\nChangez-le dès votre prochaine connexion.\n");
-            mailSender.send(message);
-            log.info("Email reset password envoyé à {}", m.getEmail());
-        } catch (Exception e) {
-            log.error("Échec d'envoi de l'email reset password à {}: {}", m.getEmail(), e.getMessage(), e);
-        }
     }
 
     /** Fetches current adherence score from the score module and sets it on the member (automatic). */
@@ -253,6 +199,66 @@ public class MemberServiceImp implements IMemberService {
         Float score = adherenceTrackingService.getCurrentAdherenceScoreForMember(member.getId());
         if (score != null) {
             member.setAdherenceScore(score);
+        }
+    }
+
+    /**
+     * Initial dynamic adherence score from onboarding medical context:
+     * - chronic indicators in medical declaration
+     * - pre-registration fraud score
+     * - risk coefficient
+     */
+    private float computeInitialAdherenceScore(PreRegistration pre) {
+        float score = 80.0f; // neutral onboarding baseline
+
+        String text = "";
+        if (pre != null && pre.getMedicalHistories() != null && !pre.getMedicalHistories().isEmpty()) {
+            MedicalHistory m = pre.getMedicalHistories().get(0);
+            text = m != null && m.getExcludedConditionDetails() != null ? m.getExcludedConditionDetails() : "";
+        }
+        String normalized = text.toLowerCase(Locale.ROOT);
+        int chronicHits = countKeywordHits(normalized,
+                "chronic", "diabet", "hypertension", "asthma", "cancer", "renal", "cardia");
+        if (chronicHits >= 1) score -= 12f;
+        if (chronicHits >= 2) score -= 6f;
+        if (chronicHits >= 3) score -= 5f;
+
+        if (pre != null && pre.getFraudScore() != null) {
+            float fraud = pre.getFraudScore();
+            if (fraud >= 0.8f) score -= 20f;
+            else if (fraud >= 0.6f) score -= 12f;
+            else if (fraud >= 0.3f) score -= 6f;
+        }
+
+        float riskCoefficient = riskAssessmentRepository.findByPreRegistration_Id(pre != null ? pre.getId() : null)
+                .stream()
+                .findFirst()
+                .map(pi.db.piversionbd.entities.pre.RiskAssessment::getRiskCoefficient)
+                .orElse(1.0f);
+        if (riskCoefficient > 1.2f) score -= 10f;
+        else if (riskCoefficient > 1.0f) score -= 5f;
+        else if (riskCoefficient < 0.95f) score += 3f;
+
+        return Math.max(20f, Math.min(100f, score));
+    }
+
+    private static int countKeywordHits(String text, String... keywords) {
+        if (text == null || text.isBlank()) return 0;
+        int hits = 0;
+        for (String k : keywords) {
+            if (k != null && !k.isBlank() && text.contains(k)) {
+                hits++;
+            }
+        }
+        return hits;
+    }
+
+    private void createInitialAdherenceEvent(Member member, float initialAdherence) {
+        if (member == null || member.getId() == null) return;
+        try {
+            adherenceTrackingService.createOnboardingBaseline(member.getId(), initialAdherence);
+        } catch (Exception ex) {
+            log.warn("Could not create onboarding adherence event for member {}: {}", member.getId(), ex.getMessage());
         }
     }
 }

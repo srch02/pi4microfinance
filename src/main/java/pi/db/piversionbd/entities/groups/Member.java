@@ -15,7 +15,6 @@ import pi.db.piversionbd.entities.pre.PreRegistration;
 import pi.db.piversionbd.entities.score.AdherenceTracking;
 import pi.db.piversionbd.entities.score.Claim;
 import pi.db.piversionbd.entities.score.MemberReward;
-import pi.db.piversionbd.entities.pre.PreRegistration;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -56,27 +55,28 @@ public class Member {
     @Column(name = "region", length = 100)
     private String region;
 
-    // Champs d'authentification
+    /** Contact email (login is via AdminUser / member portal). */
     @Column(unique = true)
     private String email;
 
-    @Column
-    private String password;
-
-    @Column
-    private Boolean enabled = true;
-
-    @Column(name = "failed_login_attempts")
-    private Integer failedLoginAttempts = 0;
-
-    @Column(name = "locked_at")
-    private LocalDateTime lockedAt;
-
-    @Column(name = "last_login")
-    private LocalDateTime lastLogin;
+    /** Telegram chat id (used for bot notifications). */
+    @Column(name = "telegram_chat_id", length = 64)
+    private String telegramChatId;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+
+    /** Hedera wallet address or virtual wallet ID (Solidari-Health blockchain). */
+    @Column(name = "wallet_address", length = 256)
+    private String walletAddress;
+
+    /** Coin balance (1 coin = 3 DT). */
+    @Column(name = "coin_balance")
+    private Float coinBalance;
+
+    /** Hedera transaction ID / hash of deployed smart contract. */
+    @Column(name = "blockchain_contract_hash", length = 128)
+    private String blockchainContractHash;
 
     @ManyToOne
     @JoinColumn(name = "current_group_id")

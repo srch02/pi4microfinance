@@ -17,20 +17,14 @@ public interface IMemberService {
 
     Member updateMember(Long id, Member updated);
 
+    /** Link a Telegram chat id to this member (for bot notifications). */
+    Member updateTelegramChatId(Long memberId, String telegramChatId);
+
     void deleteMember(Long id);
 
     /** Resolve currentGroupId to Group and set it on the member (for create/update). */
     void resolveCurrentGroup(Member member, Long currentGroupId);
 
-    /** Register member with email + password (auth). CIN optional; generated if blank. */
-    Member register(String email, String rawPassword, String cinNumber);
-
-    /** Login with email + password; updates failed attempts and lastLogin. */
-    Member login(String email, String rawPassword);
-
-    /** Reset password and send by email. */
-    void resetPassword(String email);
-
-    /** Dashboard stats: totalMembers, blockedMembers, lockedMembers, newMembersToday. */
+    /** Dashboard stats: totalMembers, newMembersToday (auth stats are on AdminUser). */
     Map<String, Long> dashboardStatsForMembers();
 }

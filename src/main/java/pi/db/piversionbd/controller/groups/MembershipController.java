@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import pi.db.piversionbd.dto.groups.GroupsModuleDto;
 import pi.db.piversionbd.service.groups.IMembershipService.AddMembershipResult;
 import pi.db.piversionbd.service.groups.IMembershipService;
+import pi.db.piversionbd.service.groups.IPaymentService;
 
 @RestController
 @RequestMapping("/api/memberships")
@@ -25,6 +27,7 @@ import pi.db.piversionbd.service.groups.IMembershipService;
 public class MembershipController {
 
     private final IMembershipService membershipService;
+    private final IPaymentService paymentService;
 
     @PostMapping("/join-by-invite")
     @Operation(
@@ -36,6 +39,7 @@ public class MembershipController {
             @ApiResponse(responseCode = "400", description = "Invalid input or pending request already exists", content = @Content(mediaType = "text/plain")),
             @ApiResponse(responseCode = "404", description = "Invite code or member not found", content = @Content(mediaType = "text/plain"))
     })
+    @Transactional
     public ResponseEntity<?> joinByInvite(
             @Parameter(
                     description = "Invite code from the private group (QR content). Placeholder: a1b2c3d4e5f6",
@@ -55,8 +59,12 @@ public class MembershipController {
 
         AddMembershipResult result = membershipService.addMemberToGroupByInviteCode(inviteCode, memberId, packageType);
         if (result.getMembership() != null) {
+            // New lifecycle: the member chooses package type, and the first payment is processed immediately.
+            // This activates the membership and completes the user onboarding for the app.
+            var created = result.getMembership();
+            var activated = paymentService.recordSuccessfulPayment(created.getId());
             return ResponseEntity.status(HttpStatus.CREATED)
-                    .body(GroupsModuleDto.MembershipDto.fromEntity(result.getMembership()));
+                    .body(GroupsModuleDto.MembershipDto.fromEntity(activated));
         }
         return ResponseEntity.status(HttpStatus.ACCEPTED)
                 .body(GroupsModuleDto.GroupChangeRequestDto.fromEntity(result.getGroupChangeRequest()));

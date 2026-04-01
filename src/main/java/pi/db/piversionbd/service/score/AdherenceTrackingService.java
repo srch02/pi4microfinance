@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import pi.db.piversionbd.dto.score.AdherenceCreateRequest;
 import pi.db.piversionbd.dto.score.AdherenceResponse;
@@ -40,6 +41,27 @@ public class AdherenceTrackingService {
         AdherenceTracking saved = adherenceTrackingRepository.save(event);
         syncMemberAdherenceScore(event.getMember().getId(), event.getCurrentScore());
         return saved;
+    }
+
+    /**
+     * Creates an onboarding adherence event in its own transaction.
+     * This prevents the whole member-creation transaction from becoming rollback-only
+     * if something goes wrong during adherence persistence.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void createOnboardingBaseline(Long memberId, float initialScore) {
+        if (memberId == null) return;
+        Member member = memberRepository.findById(memberId)
+                .orElseThrow(() -> new ResourceNotFoundException("Member introuvable: " + memberId));
+
+        AdherenceTracking event = new AdherenceTracking();
+        event.setMember(member);
+        event.setEventType(AdherenceEventType.ONBOARDING_MEDICAL_BASELINE);
+        event.setScoreChange(BigDecimal.ZERO);
+        event.setCurrentScore(BigDecimal.valueOf(initialScore));
+        event.setNote("Automatic baseline score from onboarding medical history.");
+        adherenceTrackingRepository.save(event);
+        syncMemberAdherenceScore(memberId, event.getCurrentScore());
     }
 
     @Transactional(readOnly = true)

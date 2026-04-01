@@ -22,13 +22,16 @@ public class PreRegistrationResponseDTO {
     private PreRegistrationStatus status;
     @Schema(description = "Message", example = "Application submitted. Admin will review within 2-48h.")
     private String message;
-    @Schema(description = "Prix mensuel de base (BASIC)", example = "25.00")
+    @Schema(
+        description = "Prix mensuel indicatif (BASIC), à utiliser plus tard à l’adhésion / au groupe — pas de paiement sur cette étape.",
+        example = "25.00"
+    )
     private Float calculatedPrice;
-    @Schema(description = "Prix BASIC (même que calculatedPrice)", example = "25.00")
+    @Schema(description = "Prix BASIC (identique à calculatedPrice)", example = "25.00")
     private Float priceBasic;
-    @Schema(description = "Prix CONFORT (base × 1.3)", example = "32.50")
+    @Schema(description = "Prix CONFORT indicatif (base × 1.3)", example = "32.50")
     private Float priceConfort;
-    @Schema(description = "Prix PREMIUM (base × 1.6)", example = "40.00")
+    @Schema(description = "Prix PREMIUM indicatif (base × 1.6)", example = "40.00")
     private Float pricePremium;
     @Schema(description = "Coefficient de risque", example = "1.5")
     private Float riskCoefficient;

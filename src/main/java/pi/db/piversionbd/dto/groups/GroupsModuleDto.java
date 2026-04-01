@@ -5,6 +5,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import pi.db.piversionbd.entities.groups.Group;
+import pi.db.piversionbd.entities.groups.GroupMessage;
 import pi.db.piversionbd.entities.groups.Member;
 import pi.db.piversionbd.entities.groups.Membership;
 import pi.db.piversionbd.entities.groups.Payment;
@@ -74,6 +75,53 @@ public final class GroupsModuleDto {
         }
     }
 
+    // ----- Group chat messages -----
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Schema(description = "Chat message inside a solidarity group.")
+    public static class GroupMessageDto {
+
+        @Schema(description = "Message ID.", example = "1", accessMode = Schema.AccessMode.READ_ONLY)
+        private Long messageId;
+
+        @Schema(description = "Group ID.", example = "1")
+        private Long groupId;
+
+        @Schema(description = "Sender member ID.", example = "15")
+        private Long senderId;
+
+        @Schema(description = "Decrypted message content (plaintext for the client).", example = "Hey team, remember to upload your receipts.")
+        private String content;
+
+        @Schema(description = "When the message was created.", example = "2026-02-25T00:49:18")
+        private java.time.LocalDateTime createdAt;
+
+        @Schema(description = "Hedera transaction hash / ID used for the immutable audit trail.", example = "0.0.7989863@1234567890")
+        private String hederaTxHash;
+
+        @Schema(description = "Fraud score between 0.0 and 1.0 (optional, when ML is enabled).", example = "0.87")
+        private Float fraudScore;
+
+        @Schema(description = "True when the message is flagged as suspicious by the ML model.", example = "false")
+        private Boolean flagged;
+
+        public static GroupMessageDto fromEntity(GroupMessage m, String decryptedContent) {
+            if (m == null) return null;
+            return new GroupMessageDto(
+                    m.getId(),
+                    m.getGroup() != null ? m.getGroup().getId() : null,
+                    m.getSender() != null ? m.getSender().getId() : null,
+                    decryptedContent,
+                    m.getCreatedAt(),
+                    m.getHederaTxHash(),
+                    m.getFraudScore(),
+                    m.getFlagged()
+            );
+        }
+    }
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -133,7 +181,7 @@ public final class GroupsModuleDto {
     @NoArgsConstructor
     @AllArgsConstructor
     @Schema(
-            description = "Member: identity (CIN, email), profile (age, profession, region), prices from preinscription (read-only), adherence from score (read-only), auth/admin state (read-only)."
+            description = "Member: identity (CIN, email), profile (age, profession, region), prices from preinscription (read-only), adherence from score (read-only). Login is via AdminUser (member portal)."
     )
     public static class MemberDto {
 
@@ -173,18 +221,6 @@ public final class GroupsModuleDto {
         @Schema(description = "Current group ID.", example = "1")
         private Long currentGroupId;
 
-        @Schema(description = "Account enabled. Read-only, managed by admin.", example = "true", accessMode = Schema.AccessMode.READ_ONLY)
-        private Boolean enabled;
-
-        @Schema(description = "Failed login attempts. Read-only.", example = "0", accessMode = Schema.AccessMode.READ_ONLY)
-        private Integer failedLoginAttempts;
-
-        @Schema(description = "When account was locked (after too many failed logins). Read-only.", accessMode = Schema.AccessMode.READ_ONLY)
-        private java.time.LocalDateTime lockedAt;
-
-        @Schema(description = "Last successful login. Read-only.", accessMode = Schema.AccessMode.READ_ONLY)
-        private java.time.LocalDateTime lastLogin;
-
         @Schema(description = "When the member was created. Read-only.", accessMode = Schema.AccessMode.READ_ONLY)
         private java.time.LocalDateTime createdAt;
 
@@ -203,10 +239,6 @@ public final class GroupsModuleDto {
                     m.getPricePremium(),
                     m.getAdherenceScore(),
                     m.getCurrentGroup() != null ? m.getCurrentGroup().getId() : null,
-                    m.getEnabled(),
-                    m.getFailedLoginAttempts(),
-                    m.getLockedAt(),
-                    m.getLastLogin(),
                     m.getCreatedAt()
             );
         }

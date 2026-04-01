@@ -25,7 +25,7 @@ public class Claim {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "member_id")
+    @JoinColumn(name = "member_id", nullable = false)
     private Member member;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -69,6 +69,14 @@ public class Claim {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    /** Hedera transaction ID for reimbursement (blockchain audit). */
+    @Column(name = "blockchain_hash", length = 256)
+    private String blockchainHash;
+
+    /** Reimbursement amount in coins (1 coin = 3 DT). */
+    @Column(name = "reimbursement_coins")
+    private java.math.BigDecimal reimbursementCoins;
 
     @OneToOne(mappedBy = "claim")
     private ClaimScoring claimScoring;

@@ -8,7 +8,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pi.db.piversionbd.entities.admin.AdminUser;
+import pi.db.piversionbd.entities.groups.Member;
 import pi.db.piversionbd.repository.admin.AdminUserRepository;
+import pi.db.piversionbd.repository.groups.MemberRepository;
 
 import java.security.SecureRandom;
 import java.time.LocalDate;
@@ -28,9 +30,10 @@ import org.slf4j.LoggerFactory;
 public class AdminUserService {
 
     private static final Logger log = LoggerFactory.getLogger(AdminUserService.class);
-    private static final int MAX_FAILED_ATTEMPTS = 3;
+    private static final int MAX_FAILED_ATTEMPTS = 6;
 
     private final AdminUserRepository adminUserRepository;
+    private final MemberRepository memberRepository;
     private final PasswordEncoder passwordEncoder;
     private final JavaMailSender mailSender;
 
@@ -89,6 +92,16 @@ public class AdminUserService {
         AdminUser saved = adminUserRepository.save(user);
         sendWelcomeEmail(saved);
         return saved;
+    }
+
+    /** Register a member portal account and link it to an existing Member (Option B). */
+    @Transactional
+    public AdminUser registerMemberPortalAccount(String username, String email, String rawPassword, Long memberId) {
+        Member member = memberRepository.findById(memberId)
+                .orElseThrow(() -> new IllegalArgumentException("Member introuvable: " + memberId));
+        AdminUser user = registerWithRole(username, email, rawPassword, "MEMBER");
+        user.setMember(member);
+        return adminUserRepository.save(user);
     }
 
     // 🔐 REGISTER (ADMIN par défaut)
@@ -279,6 +292,8 @@ public class AdminUserService {
         long locked = adminUserRepository.countByLockedAtNotNull();
         LocalDate today = LocalDate.now();
         long newToday = adminUserRepository.countByCreatedAtBetween(today.atStartOfDay(), today.atTime(LocalTime.MAX));
+        long insuredMembers = memberRepository.count();
+        long linkedAccounts = adminUserRepository.countByMemberIsNotNull();
 
         stats.put("totalUsers", total);
         stats.put("totalAdmins", totalAdmins);
@@ -286,6 +301,9 @@ public class AdminUserService {
         stats.put("blockedUsers", blocked);
         stats.put("lockedUsers", locked);
         stats.put("newUsersToday", newToday);
+        stats.put("insuredMembers", insuredMembers);
+        stats.put("portalAccounts", totalMembers);
+        stats.put("linkedAccounts", linkedAccounts);
         return stats;
     }
 

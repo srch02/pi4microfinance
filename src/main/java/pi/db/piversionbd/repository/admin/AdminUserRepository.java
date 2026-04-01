@@ -26,5 +26,8 @@ public interface AdminUserRepository extends JpaRepository<AdminUser, Long> {
     long countByEnabledFalse();
     long countByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
     long countByLockedAtNotNull();
+
+    /** Count portal accounts (role MEMBER) that are linked to a Member. */
+    long countByMemberIsNotNull();
 }
 

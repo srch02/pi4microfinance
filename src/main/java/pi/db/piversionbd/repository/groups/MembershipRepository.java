@@ -18,7 +18,12 @@ public interface MembershipRepository extends JpaRepository<Membership, Long> {
 
     /** Active memberships only (paid; member can file claims). */
     List<Membership> findByMember_IdAndStatusAndEndedAtIsNull(Long memberId, String status);
+    List<Membership> findByMember_IdAndStatusIgnoreCaseAndEndedAtIsNull(Long memberId, String status);
 
     /** All memberships for a member (any status), order by id desc. */
     List<Membership> findByMember_IdOrderByIdDesc(Long memberId);
+
+    /** For scheduled reminders: active memberships not ended. */
+    List<Membership> findByStatusAndEndedAtIsNull(String status);
+    List<Membership> findByStatusIgnoreCaseAndEndedAtIsNull(String status);
 }

@@ -33,7 +33,7 @@ public interface IPreRegistrationService {
     // New: submit medical history Q&A, run IA/ML-like assessment, and alert admin if suspicious
     pi.db.piversionbd.dto.pre.MedicalHistoryAssessmentDTO submitMedicalHistoryQa(Long preRegistrationId, Map<String, String> answers);
 
-    // New: confirm payment by package type (BASIC, CONFORT, PREMIUM) using calculated price
+    /** Does not collect payment; package choice and payment occur in groups / memberships. */
     PreRegistration confirmPaymentByPackage(Long id, PackageType packageType);
 }
 

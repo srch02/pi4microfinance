@@ -3,6 +3,7 @@ package pi.db.piversionbd.entities.admin;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
+import pi.db.piversionbd.entities.groups.Member;
 
 import java.time.LocalDateTime;
 import jakarta.persistence.PrePersist;
@@ -46,6 +47,11 @@ public class AdminUser {
 
     @Column(name = "locked_at")
     private LocalDateTime lockedAt;
+
+    /** Optional link to insurance Member when this user is a member portal account. */
+    @OneToOne
+    @JoinColumn(name = "member_id", nullable = true)
+    private Member member;
 
     @PrePersist
     public void onCreate() {

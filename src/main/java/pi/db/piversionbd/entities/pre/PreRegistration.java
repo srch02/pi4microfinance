@@ -27,6 +27,9 @@ public class PreRegistration {
     @Column(name = "fraud_score")
     private Float fraudScore;
 
+    @Column(name = "rejection_reason", length = 1024)
+    private String rejectionReason;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

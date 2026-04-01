@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>reCAPTCHA Login Test</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: #0b1220;
+      color: #e7ecff;
+    }
+    .wrap { max-width: 880px; margin: 40px auto; padding: 0 16px; }
+    .card {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 16px;
+      padding: 18px;
+      backdrop-filter: blur(8px);
+    }
+    h1 { font-size: 18px; margin: 0 0 10px; }
+    .hint { opacity: 0.85; font-size: 13px; line-height: 1.4; margin-bottom: 14px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    label { display: block; font-size: 12px; opacity: .9; margin: 8px 0 6px; }
+    input, select, button, textarea {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.06);
+      color: #e7ecff;
+      padding: 10px 12px;
+      font-size: 14px;
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: rgba(122,182,255,0.7); }
+    .row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+    button {
+      cursor: pointer;
+      background: linear-gradient(135deg, rgba(78,140,255,0.85), rgba(160,92,255,0.70));
+      border: none;
+      font-weight: 600;
+    }
+    button.secondary {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.14);
+      font-weight: 600;
+    }
+    .status { font-size: 12px; opacity: .9; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    pre {
+      margin: 12px 0 0;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(0,0,0,0.25);
+      overflow: auto;
+      max-height: 320px;
+    }
+    .footer { margin-top: 10px; font-size: 12px; opacity: .75; }
+    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>reCAPTCHA Login Test (Backend)</h1>
+    <div class="hint">
+      This page is served by your Spring Boot app at <span class="mono">/recaptcha-test.html</span> so it shares the same origin as the API.
+      It generates a <b>real</b> reCAPTCHA response token and sends it as <span class="mono">recaptchaToken</span> to your login endpoints.
+    </div>
+
+    <div class="grid">
+      <div>
+        <label for="mode">Login endpoint</label>
+        <select id="mode">
+          <option value="member">Member login — /api/members/auth/login</option>
+          <option value="admin">Admin login — /api/auth/login</option>
+        </select>
+
+        <label for="username">Username</label>
+        <input id="username" autocomplete="username" placeholder="e.g. sarra" />
+
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" placeholder="Your password" />
+      </div>
+
+      <div>
+        <label>Captcha</label>
+        <div id="captchaBox" class="mono status">Loading reCAPTCHA…</div>
+        <div style="height: 10px"></div>
+        <div class="row">
+          <button id="btnLogin" onclick="doLogin()">Login</button>
+          <button class="secondary" onclick="copyJwt()">Copy JWT</button>
+        </div>
+        <div class="footer">
+          If you see <span class="mono">Captcha invalide ou expiré</span>, you likely did not solve it or your domain is not allowed in Google reCAPTCHA console.
+        </div>
+      </div>
+    </div>
+
+    <pre id="out" class="mono">Output will appear here…</pre>
+  </div>
+</div>
+
+<script>
+  let SITE_KEY = "";
+  let WIDGET_ID = null;
+  let LAST_JWT = "";
+
+  function endpointUrl() {
+    const mode = document.getElementById("mode").value;
+    return mode === "admin" ? "/api/auth/login" : "/api/members/auth/login";
+  }
+
+  function setOut(text) {
+    document.getElementById("out").textContent = text;
+  }
+
+  async function loadConfigAndCaptcha() {
+    const box = document.getElementById("captchaBox");
+    const watchdog = setTimeout(function () {
+      if (box.textContent.indexOf("Loading") === 0 || box.textContent === "Loading reCAPTCHA…") {
+        box.innerHTML = "Still loading… If this never finishes: (1) allow <span class=\"mono\">google.com</span> / <span class=\"mono\">gstatic.com</span> (ad blocker), (2) add this host to reCAPTCHA <b>Authorized domains</b> in Google console, (3) use a <b>reCAPTCHA v2 “I’m not a robot”</b> site key with <span class=\"mono\">render=explicit</span>, or (4) set <span class=\"mono\">recaptcha.enabled=false</span> to test login without a widget.";
+      }
+    }, 12000);
+
+    try {
+      const res = await fetch("/api/auth/recaptcha-config", { headers: { "Accept": "application/json" }});
+      const raw = await res.text();
+      if (!res.ok) {
+        clearTimeout(watchdog);
+        box.textContent = "GET /api/auth/recaptcha-config failed: HTTP " + res.status + " — " + raw.slice(0, 200);
+        return;
+      }
+      let cfg;
+      try {
+        cfg = JSON.parse(raw);
+      } catch (pe) {
+        clearTimeout(watchdog);
+        box.textContent = "Invalid JSON from recaptcha-config: " + raw.slice(0, 200);
+        return;
+      }
+      if (!cfg || !cfg.enabled) {
+        clearTimeout(watchdog);
+        box.textContent = "reCAPTCHA is disabled (recaptcha.enabled=false). You can login via API without a captcha token when disabled.";
+        return;
+      }
+      SITE_KEY = (cfg.siteKey || "").trim();
+      if (!SITE_KEY) {
+        clearTimeout(watchdog);
+        box.textContent = "Missing site key (recaptcha.site-key in application.properties).";
+        return;
+      }
+
+      // Load Google script dynamically with onload callback (v2 checkbox, explicit render).
+      window.__onRecaptchaLoaded = function () {
+        clearTimeout(watchdog);
+        try {
+          box.innerHTML = "";
+          WIDGET_ID = grecaptcha.render("captchaBox", { sitekey: SITE_KEY });
+        } catch (err) {
+          box.textContent = "grecaptcha.render failed: " + (err && err.message ? err.message : err);
+        }
+      };
+      const s = document.createElement("script");
+      s.src = "https://www.google.com/recaptcha/api.js?onload=__onRecaptchaLoaded&render=explicit";
+      s.async = true;
+      s.defer = true;
+      s.onerror = function () {
+        clearTimeout(watchdog);
+        box.textContent = "Failed to load https://www.google.com/recaptcha/api.js (network, firewall, or blocked).";
+      };
+      document.head.appendChild(s);
+    } catch (e) {
+      clearTimeout(watchdog);
+      box.textContent = "Failed to load config/captcha: " + (e && e.message ? e.message : e);
+    }
+  }
+
+  async function doLogin() {
+    LAST_JWT = "";
+    const u = document.getElementById("username").value || "";
+    const p = document.getElementById("password").value || "";
+
+    if (!u.trim() || !p.trim()) {
+      setOut("Please enter username and password.");
+      return;
+    }
+    if (typeof grecaptcha === "undefined") {
+      setOut("reCAPTCHA script not loaded yet.");
+      return;
+    }
+
+    const token = grecaptcha.getResponse(WIDGET_ID);
+    if (!token) {
+      setOut("Please solve the reCAPTCHA first (checkbox).");
+      return;
+    }
+
+    const body = { username: u, password: p, recaptchaToken: token };
+    try {
+      const res = await fetch(endpointUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const text = await res.text();
+      setOut("HTTP " + res.status + "\n\n" + text);
+      try {
+        const json = JSON.parse(text);
+        if (json && json.token) LAST_JWT = json.token;
+      } catch (_) {}
+    } catch (e) {
+      setOut("Request failed: " + (e && e.message ? e.message : e));
+    } finally {
+      try { grecaptcha.reset(WIDGET_ID); } catch (_) {}
+    }
+  }
+
+  async function copyJwt() {
+    if (!LAST_JWT) {
+      setOut("No JWT yet. Click Login first and ensure it returns a token.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(LAST_JWT);
+      setOut("JWT copied to clipboard.\n\n" + LAST_JWT);
+    } catch (e) {
+      setOut("Could not copy automatically. Here is the JWT:\n\n" + LAST_JWT);
+    }
+  }
+
+  loadConfigAndCaptcha();
+</script>
+</body>
+</html>
+

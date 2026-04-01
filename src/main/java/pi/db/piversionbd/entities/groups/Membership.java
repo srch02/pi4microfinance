@@ -59,6 +59,19 @@ public class Membership {
     @Column(name = "annual_limit")
     private Float annualLimit;
 
+    /**
+     * Total DT already reimbursed via approved claims this policy period (same membership).
+     * Remaining annual headroom is {@code annualLimit - annualUsedAmount} when annualLimit is set.
+     */
+    @Column(name = "annual_used_amount")
+    private Float annualUsedAmount;
+
+    /**
+     * Number of approved claims counted against {@link #consultationsLimit} for this membership.
+     */
+    @Column(name = "consultations_used")
+    private Integer consultationsUsed;
+
     /** pending, active, suspended, cancelled. New memberships start as pending until first payment. */
     @Column(name = "status", length = 20)
     private String status;
@@ -70,6 +83,10 @@ public class Membership {
     /** Set when membership becomes active (first successful payment). */
     @Column(name = "activated_at")
     private Instant activatedAt;
+
+    /** Last time we sent a Telegram payment reminder (to avoid daily spam). */
+    @Column(name = "last_payment_reminder_at")
+    private Instant lastPaymentReminderAt;
 
     public static final String STATUS_PENDING = "pending";
     public static final String STATUS_ACTIVE = "active";
@@ -140,6 +157,26 @@ public class Membership {
             return false;
         }
         return usedAmountThisYear >= annualLimit * ALERT_THRESHOLD_RATIO;
+    }
+
+    /** Remaining DT that can still be claimed this period (0 if exhausted). */
+    public float getRemainingAnnualAmount() {
+        if (annualLimit == null || annualLimit <= 0f) {
+            return Float.MAX_VALUE;
+        }
+        float used = annualUsedAmount == null ? 0f : annualUsedAmount;
+        float r = annualLimit - used;
+        return r > 0f ? r : 0f;
+    }
+
+    /** Remaining consultation slots, or a large value if no limit is configured. */
+    public int getRemainingConsultations() {
+        if (consultationsLimit == null || consultationsLimit <= 0) {
+            return Integer.MAX_VALUE;
+        }
+        int used = consultationsUsed == null ? 0 : consultationsUsed;
+        int r = consultationsLimit - used;
+        return Math.max(r, 0);
     }
 
     /**

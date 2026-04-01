@@ -1,5 +1,5 @@
 package pi.db.piversionbd.service.pre;
-import pi.db.piversionbd.entities.groups.Member;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,7 +23,8 @@ import pi.db.piversionbd.repository.pre.ExcludedConditionRepository;
 import pi.db.piversionbd.repository.pre.MedicalHistoryRepository;
 import pi.db.piversionbd.repository.pre.RiskAssessmentRepository;
 import pi.db.piversionbd.repository.groups.MemberRepository;
-
+import pi.db.piversionbd.service.hedera.HederaContractService;
+import pi.db.piversionbd.service.hedera.SolidariHealthContractService;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -38,16 +39,19 @@ import java.util.regex.Pattern;
 
 /**
  * Implements Module 5: Pre-Registration & Insurance flow.
- * Steps: Identity (CIN duplicate/blacklist) → Medical declaration → Excluded conditions → Risk & price → Admin queue.
+ * Steps: Identity (CIN duplicate/blacklist) → Medical declaration → Excluded conditions → Risk & indicative pricing → Admin queue.
+ * Indicative package prices are returned and stored on {@link RiskAssessment} for the member to use when joining a group.
+ * Payment collection stays in the groups / memberships module ({@link #confirmPayment} / {@link #confirmPaymentByPackage} do not charge here).
+ * Hedera helpers below are for when a {@link Member} is created/activated (wallet, topic audit, contract).
  */
 @Service
 @RequiredArgsConstructor
 @Transactional
 public class PreRegistrationServiceImpl implements IPreRegistrationService {
 
+    private static final Pattern CIN_PATTERN = Pattern.compile("\\b\\d{1,8}\\b");
     private static final float BASE_MONTHLY_PRICE = 25.0f;
     private static final float MAX_MONTHLY_PRICE = 70.0f;
-    private static final Pattern CIN_PATTERN = Pattern.compile("\\b\\d{1,8}\\b");
 
     private final pi.db.piversionbd.repository.pre.PreRegistrationRepository preRegistrationRepository;
     private final BlacklistRepository blacklistRepository;
@@ -59,6 +63,8 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
     private final SystemAlertRepository systemAlertRepository;
     private final MemberRepository memberRepository;
     private final MedicalHistoryAiService medicalHistoryAiService;
+    private final HederaContractService hederaContractService;
+    private final SolidariHealthContractService solidariHealthContractService;
 
     @Override
     @Transactional
@@ -92,12 +98,15 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
                 "Sorry, your medical condition requires premium insurance that we cannot provide.");
         }
 
-        // Step 4: Fraud detection & risk coefficient and personalized price
+        // Step 4: Fraud, risk coefficient, and indicative monthly prices (for later use when creating membership; no payment here)
         float fraudScore = detectFraudScore(requestDTO, declaration);
         boolean hasChronicIllness = hasChronicIllness(declaration);
         float riskCoefficient = calculateRiskCoefficient(requestDTO, declaration);
         float calculatedPrice = Math.round(BASE_MONTHLY_PRICE * riskCoefficient * 100f) / 100f;
         calculatedPrice = Math.min(MAX_MONTHLY_PRICE, calculatedPrice);
+        float priceBasic = calculatedPrice;
+        float priceConfort = Math.min(MAX_MONTHLY_PRICE, calculatedPrice * 1.3f);
+        float pricePremium = Math.min(MAX_MONTHLY_PRICE, calculatedPrice * 1.6f);
 
         // Persist: PreRegistration, MedicalHistory, RiskAssessment, AdminReviewQueueItem
         PreRegistration pre = new PreRegistration();
@@ -138,9 +147,6 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         queueItem.setCreatedAt(LocalDateTime.now());
         adminReviewQueueItemRepository.save(queueItem);
 
-        float priceBasic = calculatedPrice;
-        float priceConfort = Math.min(MAX_MONTHLY_PRICE, calculatedPrice * 1.3f);
-        float pricePremium = Math.min(MAX_MONTHLY_PRICE, calculatedPrice * 1.6f);
         return PreRegistrationResponseDTO.builder()
             .success(true)
             .preRegistrationId(pre.getId())
@@ -229,59 +235,22 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
     @Override
     @Transactional
     public PreRegistration confirmPayment(Long id, Double paymentAmount) {
-        PreRegistration pre = getPreRegistrationById(id);
-        if (pre.getStatus() != PreRegistrationStatus.APPROVED) {
-            throw new PreRegistrationException("Pre-registration must be approved before payment. Current status: " + pre.getStatus());
-        }
-
-        Optional<RiskAssessment> latest = riskAssessmentRepository.findByPreRegistration_Id(pre.getId()).stream().findFirst();
-        float basePrice = latest.map(RiskAssessment::getCalculatedPrice).orElse(BASE_MONTHLY_PRICE);
-        if (paymentAmount != null && Math.abs(paymentAmount - basePrice) > 0.01) {
-            throw new PreRegistrationException("Payment amount does not match calculated price: " + basePrice);
-        }
-
-        Member member = new Member();
-        member.setCinNumber(pre.getCinNumber());
-        member.setPersonalizedMonthlyPrice(basePrice);
-        applyPackagePricesToMember(member, basePrice);
-        member.setAdherenceScore(null);
-        member.setCurrentGroup(null);
-        member.setPreRegistration(pre);
-        member = memberRepository.save(member);
-        enqueueMemberActivatedSystemAlert(pre, member);
-
-        pre.setStatus(PreRegistrationStatus.ACTIVATED);
-        preRegistrationRepository.save(pre);
-
-        return pre;
+        // Payments are now processed in the `groups` module:
+        // user creates a `Member` after APPROVED, joins a group, and pays the first membership amount.
+        throw new PreRegistrationException(
+            "Payment is handled in the groups module. " +
+            "After pre-registration is APPROVED, create the Member, join a group and pay the first amount to activate membership.");
     }
 
     @Override
     @Transactional
     public PreRegistration confirmPaymentByPackage(Long id, PackageType packageType) {
-        PreRegistration pre = getPreRegistrationById(id);
-        if (pre.getStatus() != PreRegistrationStatus.APPROVED) {
-            throw new PreRegistrationException("Pre-registration must be approved before payment. Current status: " + pre.getStatus());
-        }
-
-        Optional<RiskAssessment> latest = riskAssessmentRepository.findByPreRegistration_Id(pre.getId()).stream().findFirst();
-        float basePrice = latest.map(RiskAssessment::getCalculatedPrice).orElse(BASE_MONTHLY_PRICE);
-        float finalPrice = applyPackageMultiplier(basePrice, packageType);
-
-        Member member = new Member();
-        member.setCinNumber(pre.getCinNumber());
-        member.setPersonalizedMonthlyPrice(finalPrice);
-        applyPackagePricesToMember(member, basePrice);
-        member.setAdherenceScore(null);
-        member.setCurrentGroup(null);
-        member.setPreRegistration(pre);
-        member = memberRepository.save(member);
-        enqueueMemberActivatedSystemAlert(pre, member);
-
-        pre.setStatus(PreRegistrationStatus.ACTIVATED);
-        preRegistrationRepository.save(pre);
-
-        return pre;
+        // Payments are now processed in the `groups` module:
+        // user creates a `Member` after APPROVED, joins a group, and pays the first membership amount.
+        throw new PreRegistrationException(
+            "Payment is handled in the groups module. " +
+            "Package selection is done when joining the group (BASIC/CONFORT/PREMIUM). " +
+            "Create the Member after APPROVED, join a group and pay to activate membership.");
     }
 
     @Override
@@ -291,14 +260,6 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         if (pre.getStatus() == PreRegistrationStatus.ACTIVATED) {
             throw new PreRegistrationException("Cannot delete: account already activated.");
         }
-
-        // ADD THIS - nullify member's preRegistration reference first
-        Member member = memberRepository.findByPreRegistration_Id(id);
-        if (member != null) {
-            member.setPreRegistration(null);
-            memberRepository.save(member);
-        }
-
         adminReviewQueueItemRepository.findByPreRegistration(pre).forEach(adminReviewQueueItemRepository::delete);
         riskAssessmentRepository.findByPreRegistration_Id(pre.getId()).forEach(riskAssessmentRepository::delete);
         medicalHistoryRepository.findByPreRegistration_Id(pre.getId()).forEach(medicalHistoryRepository::delete);
@@ -723,6 +684,42 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         return Math.max(0f, Math.min(score, 1f));
     }
 
+    /** Hedera: wallet, initial coins, topic audit + SolidariHealth contract. */
+    private void applyHederaIntegration(Member member, PackageType packageType, float finalPrice, String exclusionsNote) {
+        String evmAddress = SolidariHealthContractService.memberIdToEvmAddress(member.getId());
+        member.setWalletAddress(evmAddress);
+        float initialCoins = Math.round(finalPrice * 100f / 3f) / 100f; // 1 coin = 3 DT
+        member.setCoinBalance(initialCoins);
+        String topicHash = hederaContractService.deployContract(
+                member.getId(), member.getCinNumber(),
+                packageType != null ? packageType.name() : "BASIC",
+                member.getPriceBasic(), member.getPriceConfort(), member.getPricePremium(),
+                exclusionsNote);
+        if (topicHash != null) {
+            member.setBlockchainContractHash(topicHash);
+        }
+        long monthlyCents = Math.round(finalPrice * 100);
+        long annualLimitDt = getAnnualLimitDt(packageType);
+        long annualCents = annualLimitDt * 100;
+        String contractHash = solidariHealthContractService.createMemberPolicy(
+                member.getId(), member.getCinNumber(),
+                packageType != null ? packageType.name() : "BASIC",
+                monthlyCents, annualCents);
+        if (contractHash != null) {
+            member.setBlockchainContractHash(contractHash);
+        }
+        memberRepository.save(member);
+    }
+
+    private long getAnnualLimitDt(PackageType packageType) {
+        if (packageType == null) return 1500;
+        return switch (packageType) {
+            case BASIC -> 1500;
+            case CONFORT -> 3000;
+            case PREMIUM -> 6000;
+        };
+    }
+
     private float applyPackageMultiplier(float basePrice, PackageType packageType) {
         if (packageType == null) {
             return basePrice;
@@ -735,7 +732,7 @@ public class PreRegistrationServiceImpl implements IPreRegistrationService {
         return Math.min(MAX_MONTHLY_PRICE, raw);
     }
 
-    /** Sets priceBasic, priceConfort, pricePremium on member from preinscription base price so member can choose package when creating membership. */
+    /** Sets priceBasic, priceConfort, pricePremium on member from pré-inscription base price. */
     private void applyPackagePricesToMember(Member member, float basePrice) {
         member.setPriceBasic(Math.min(MAX_MONTHLY_PRICE, basePrice));
         member.setPriceConfort(Math.min(MAX_MONTHLY_PRICE, basePrice * 1.3f));

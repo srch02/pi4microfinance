@@ -10,7 +10,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import pi.db.piversionbd.security.CurrentMemberResolver;
 import pi.db.piversionbd.dto.groups.GroupsModuleDto;
 import pi.db.piversionbd.entities.groups.Group;
 import pi.db.piversionbd.entities.groups.Member;
@@ -31,12 +33,57 @@ public class MemberController {
     private final IMemberService memberService;
     private final IMembershipService membershipService;
     private final IGroupService groupService;
+    private final CurrentMemberResolver currentMemberResolver;
 
     @GetMapping("/sample")
     @Operation(summary = "Member area sample", description = "Simple endpoint to verify MEMBER access (e.g. after login).")
     @ApiResponse(responseCode = "200", description = "MEMBER access OK")
     public ResponseEntity<String> sample() {
         return ResponseEntity.ok("MEMBER access OK");
+    }
+
+    @GetMapping("/me")
+    @Operation(summary = "Current member profile", description = "No memberId: uses the logged-in portal account (JWT) linked to your Member record.")
+    @ApiResponse(responseCode = "200", description = "OK")
+    @ApiResponse(responseCode = "403", description = "No member linked to this account")
+    public ResponseEntity<GroupsModuleDto.MemberDto> getMe(Authentication auth) {
+        long id = currentMemberResolver.requireMemberId(auth);
+        Member member = memberService.getMemberById(id);
+        return ResponseEntity.ok(GroupsModuleDto.MemberDto.fromEntity(member));
+    }
+
+    @GetMapping("/me/groups")
+    @Operation(summary = "Groups for the current member", description = "Same as GET /api/members/{memberId}/groups but without memberId in the URL.")
+    public ResponseEntity<List<GroupsModuleDto.GroupDto>> getMyGroups(Authentication auth) {
+        long id = currentMemberResolver.requireMemberId(auth);
+        List<Group> groups = membershipService.getGroupsForMember(id);
+        List<GroupsModuleDto.GroupDto> list = groups.stream()
+                .map(GroupsModuleDto.GroupDto::fromEntity)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(list);
+    }
+
+    @GetMapping("/me/memberships")
+    @Operation(summary = "Memberships for the current member", description = "Same as GET /api/members/{memberId}/memberships but without memberId.")
+    public ResponseEntity<List<GroupsModuleDto.MembershipDto>> getMyMemberships(Authentication auth) {
+        long id = currentMemberResolver.requireMemberId(auth);
+        List<Membership> memberships = membershipService.getMembershipsForMember(id);
+        List<GroupsModuleDto.MembershipDto> list = memberships.stream()
+                .map(GroupsModuleDto.MembershipDto::fromEntity)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(list);
+    }
+
+    @PatchMapping("/me/telegram")
+    @Operation(summary = "Link Telegram for the current member", description = "Same as PATCH /api/members/{memberId}/telegram without memberId.")
+    public ResponseEntity<GroupsModuleDto.MemberDto> linkMyTelegram(
+            Authentication auth,
+            @Parameter(description = "Telegram chat_id", required = true, schema = @Schema(example = "8024169278"))
+            @RequestParam String telegramChatId
+    ) {
+        long id = currentMemberResolver.requireMemberId(auth);
+        Member updated = memberService.updateTelegramChatId(id, telegramChatId);
+        return ResponseEntity.ok(GroupsModuleDto.MemberDto.fromEntity(updated));
     }
 
     @GetMapping
@@ -61,7 +108,9 @@ public class MemberController {
             @ApiResponse(responseCode = "404", description = "Member not found", content = @Content(mediaType = "text/plain", schema = @Schema(example = "Member not found with id 99")))
     })
     public ResponseEntity<GroupsModuleDto.MemberDto> getById(
+            Authentication auth,
             @Parameter(description = "Member ID. Placeholder: 1", required = true, schema = @Schema(example = "1")) @PathVariable Long memberId) {
+        currentMemberResolver.assertMemberOwnsMemberIdOrIsAdmin(auth, memberId);
         Member member = memberService.getMemberById(memberId);
         return ResponseEntity.ok(GroupsModuleDto.MemberDto.fromEntity(member));
     }
@@ -73,7 +122,9 @@ public class MemberController {
             @ApiResponse(responseCode = "404", description = "Member not found")
     })
     public ResponseEntity<List<GroupsModuleDto.GroupDto>> getGroupsForMember(
+            Authentication auth,
             @Parameter(description = "Member ID. Placeholder: 1", required = true, schema = @Schema(example = "1")) @PathVariable Long memberId) {
+        currentMemberResolver.assertMemberOwnsMemberIdOrIsAdmin(auth, memberId);
         List<Group> groups = membershipService.getGroupsForMember(memberId);
         List<GroupsModuleDto.GroupDto> list = groups.stream()
                 .map(GroupsModuleDto.GroupDto::fromEntity)
@@ -88,7 +139,9 @@ public class MemberController {
             @ApiResponse(responseCode = "404", description = "Member not found")
     })
     public ResponseEntity<List<GroupsModuleDto.MembershipDto>> getMembershipsForMember(
+            Authentication auth,
             @Parameter(description = "Member ID. Placeholder: 1", required = true, schema = @Schema(example = "1")) @PathVariable Long memberId) {
+        currentMemberResolver.assertMemberOwnsMemberIdOrIsAdmin(auth, memberId);
         List<Membership> memberships = membershipService.getMembershipsForMember(memberId);
         List<GroupsModuleDto.MembershipDto> list = memberships.stream()
                 .map(GroupsModuleDto.MembershipDto::fromEntity)
@@ -109,7 +162,7 @@ public class MemberController {
             @Parameter(description = "Profession (e.g. student, worker). Placeholder: student", schema = @Schema(example = "student")) @RequestParam(required = false) String profession,
             @Parameter(description = "Region. Placeholder: Tunis", schema = @Schema(example = "Tunis")) @RequestParam(required = false) String region,
             @Parameter(description = "Email (for login / notifications). Placeholder: member@example.com", schema = @Schema(example = "member@example.com")) @RequestParam(required = false) String email) {
-        GroupsModuleDto.MemberDto dto = new GroupsModuleDto.MemberDto(null, cinNumber, age, profession, region, email, null, null, null, null, null, null, null, null, null, null, null);
+        GroupsModuleDto.MemberDto dto = new GroupsModuleDto.MemberDto(null, cinNumber, age, profession, region, email, null, null, null, null, null, null, null);
         Member member = toEntity(dto);
         Member created = memberService.createMember(member);
         return ResponseEntity.status(HttpStatus.CREATED).body(GroupsModuleDto.MemberDto.fromEntity(created));
@@ -123,12 +176,14 @@ public class MemberController {
             @ApiResponse(responseCode = "404", description = "Member or group not found", content = @Content(mediaType = "text/plain", schema = @Schema(example = "Member not found with id 99")))
     })
     public ResponseEntity<GroupsModuleDto.MemberDto> update(
+            Authentication auth,
             @Parameter(description = "Member ID. Placeholder: 1", required = true, schema = @Schema(example = "1")) @PathVariable Long memberId,
             @Parameter(description = "Age. Placeholder: 28", schema = @Schema(example = "28")) @RequestParam(required = false) Integer age,
             @Parameter(description = "Profession. Placeholder: student", schema = @Schema(example = "student")) @RequestParam(required = false) String profession,
             @Parameter(description = "Region. Placeholder: Tunis", schema = @Schema(example = "Tunis")) @RequestParam(required = false) String region,
             @Parameter(description = "Email (for login / notifications).", schema = @Schema(example = "member@example.com")) @RequestParam(required = false) String email,
             @Parameter(description = "Current group ID. Placeholder: 1", schema = @Schema(example = "1")) @RequestParam(required = false) Long currentGroupId) {
+        currentMemberResolver.assertMemberOwnsMemberIdOrIsAdmin(auth, memberId);
         Member existing = memberService.getMemberById(memberId);
         boolean noParamsSent = age == null && profession == null && region == null && email == null && currentGroupId == null;
         if (noParamsSent) {
@@ -139,7 +194,7 @@ public class MemberController {
         String newRegion = region != null ? region : existing.getRegion();
         String newEmail = email != null ? email : existing.getEmail();
         Long newGroupId = currentGroupId != null ? currentGroupId : (existing.getCurrentGroup() != null ? existing.getCurrentGroup().getId() : null);
-        GroupsModuleDto.MemberDto dto = new GroupsModuleDto.MemberDto(memberId, existing.getCinNumber(), newAge, newProfession, newRegion, newEmail, existing.getPersonalizedMonthlyPrice(), existing.getPriceBasic(), existing.getPriceConfort(), existing.getPricePremium(), existing.getAdherenceScore(), newGroupId, existing.getEnabled(), existing.getFailedLoginAttempts(), existing.getLockedAt(), existing.getLastLogin(), existing.getCreatedAt());
+        GroupsModuleDto.MemberDto dto = new GroupsModuleDto.MemberDto(memberId, existing.getCinNumber(), newAge, newProfession, newRegion, newEmail, existing.getPersonalizedMonthlyPrice(), existing.getPriceBasic(), existing.getPriceConfort(), existing.getPricePremium(), existing.getAdherenceScore(), newGroupId, existing.getCreatedAt());
         Member member = toEntity(dto);
         memberService.resolveCurrentGroup(member, newGroupId);
         Member updated = memberService.updateMember(memberId, member);
@@ -154,7 +209,9 @@ public class MemberController {
             @ApiResponse(responseCode = "404", description = "Member not found", content = @Content(mediaType = "text/plain", schema = @Schema(example = "Member not found with id 99")))
     })
     public void delete(
+            Authentication auth,
             @Parameter(description = "Member ID. Placeholder: 1", required = true, schema = @Schema(example = "1")) @PathVariable Long memberId) {
+        currentMemberResolver.assertMemberOwnsMemberIdOrIsAdmin(auth, memberId);
         memberService.deleteMember(memberId);
     }
 
@@ -164,13 +221,38 @@ public class MemberController {
             description = "Uses the member's stored age, profession, and region to return matching groups (same region, compatible type, not full). After member fills the form, call this so they can choose a group, then choose package (BASIC/CONFORT/PREMIUM) and pay.")
     @ApiResponse(responseCode = "200", description = "OK – list of suggested groups")
     public ResponseEntity<List<GroupsModuleDto.GroupDto>> getGroupSuggestionsForMember(
+            Authentication auth,
             @Parameter(description = "Member ID", required = true) @PathVariable Long memberId) {
+        currentMemberResolver.assertMemberOwnsMemberIdOrIsAdmin(auth, memberId);
         Member member = memberService.getMemberById(memberId);
         List<Group> groups = groupService.getGroupSuggestions(member.getAge(), member.getProfession(), member.getRegion(), null);
         List<GroupsModuleDto.GroupDto> list = groups.stream()
                 .map(GroupsModuleDto.GroupDto::fromEntity)
                 .collect(Collectors.toList());
         return ResponseEntity.ok(list);
+    }
+
+    @PatchMapping("/{memberId}/telegram")
+    @Operation(
+            summary = "Link Telegram chat id to member",
+            description = "Stores the Telegram chat_id on the member so the bot can notify them (unread messages, payment reminders). "
+                    + "Get chat_id from Telegram getUpdates: message.chat.id."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Telegram chat id linked"),
+            @ApiResponse(responseCode = "400", description = "telegramChatId required"),
+            @ApiResponse(responseCode = "404", description = "Member not found")
+    })
+    public ResponseEntity<GroupsModuleDto.MemberDto> linkTelegram(
+            Authentication auth,
+            @Parameter(description = "Member ID", required = true, schema = @Schema(example = "1"))
+            @PathVariable Long memberId,
+            @Parameter(description = "Telegram chat_id (example from getUpdates).", required = true, schema = @Schema(example = "8024169278"))
+            @RequestParam String telegramChatId
+    ) {
+        currentMemberResolver.assertMemberOwnsMemberIdOrIsAdmin(auth, memberId);
+        Member updated = memberService.updateTelegramChatId(memberId, telegramChatId);
+        return ResponseEntity.ok(GroupsModuleDto.MemberDto.fromEntity(updated));
     }
 
     private static Member toEntity(GroupsModuleDto.MemberDto dto) {

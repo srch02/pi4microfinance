@@ -16,7 +16,6 @@ import pi.db.piversionbd.dto.pre.MedicalHistoryQaRequestDTO;
 import pi.db.piversionbd.dto.pre.PreRegistrationRequestDTO;
 import pi.db.piversionbd.dto.pre.PreRegistrationResponseDTO;
 import pi.db.piversionbd.dto.pre.PreRegistrationSummaryDTO;
-import pi.db.piversionbd.entities.groups.PackageType;
 import pi.db.piversionbd.entities.pre.FinancialStabilityLevel;
 import pi.db.piversionbd.entities.pre.PreRegistration;
 import pi.db.piversionbd.entities.pre.PreRegistrationStatus;
@@ -162,34 +161,6 @@ public class PreRegistrationController {
         @RequestParam PreRegistrationStatus status
     ) {
         PreRegistration pre = preRegistrationService.updatePreRegistrationStatus(id, status);
-        return ResponseEntity.ok(toSummary(pre));
-    }
-
-    @PostMapping("/{id}/confirm-payment")
-    @Operation(summary = "Confirme le paiement et active le compte")
-    public ResponseEntity<PreRegistrationSummaryDTO> confirmPayment(
-        @Parameter(description = "ID de la pré-inscription", example = "1")
-        @PathVariable Long id,
-        @Parameter(description = "Montant de paiement attendu", example = "75.50")
-        @RequestParam Double paymentAmount
-    ) {
-        PreRegistration pre = preRegistrationService.confirmPayment(id, paymentAmount);
-        return ResponseEntity.ok(toSummary(pre));
-    }
-
-    @PostMapping("/{id}/confirm-payment-by-package")
-    @Operation(summary = "Confirme le paiement par type de package (BASIC, CONFORT, PREMIUM) et active le compte")
-    public ResponseEntity<PreRegistrationSummaryDTO> confirmPaymentByPackage(
-        @Parameter(description = "ID de la pré-inscription", example = "1")
-        @PathVariable Long id,
-        @Parameter(
-            description = "Type de package",
-            example = "BASIC",
-            schema = @Schema(implementation = PackageType.class)
-        )
-        @RequestParam PackageType packageType
-    ) {
-        PreRegistration pre = preRegistrationService.confirmPaymentByPackage(id, packageType);
         return ResponseEntity.ok(toSummary(pre));
     }
 
