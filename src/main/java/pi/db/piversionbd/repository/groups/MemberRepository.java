@@ -19,6 +19,8 @@ public interface MemberRepository extends JpaRepository<Member, Long> {
 
     Optional<Member> findByEmail(String email);
 
+    Optional<Member> findByCinNumber(String cinNumber);
+
     boolean existsByEmail(String email);
 
     long countByCreatedAtBetween(LocalDateTime start, LocalDateTime end);

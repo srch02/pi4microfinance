@@ -13,7 +13,9 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
 
 @Configuration
@@ -32,7 +34,12 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
+                .httpBasic(basic -> basic.disable())
+                .formLogin(form -> form.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // No WWW-Authenticate: Basic — avoids the browser username/password bar; clients use JWT only.
+                .exceptionHandling(ex -> ex.authenticationEntryPoint(
+                        new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/api/auth/**",
@@ -43,6 +50,8 @@ public class SecurityConfig {
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**"
                         ).permitAll()
+                        // Public registration/member-creation entrypoints
+                        .requestMatchers(HttpMethod.POST, "/api/members").permitAll()
                         // Public pré-inscription funnel (no JWT): submit, OCR, Q&A, uploads
                         .requestMatchers(HttpMethod.POST, "/api/pre-registration").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/pre-registration/form").permitAll()
@@ -50,10 +59,19 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/pre-registration/medical-history/qa").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/pre-registration/*/cin/upload").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/pre-registration/medical-history/*/upload").permitAll()
+                        // Allow full pre-registration workflow to everyone
+                        .requestMatchers("/api/pre-registration/**").permitAll()
+                        // Public group catalog (browse before login); mutations stay MEMBER/ADMIN below
+                        .requestMatchers(HttpMethod.GET, "/api/groups").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/groups/*").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/groups/*/pool").permitAll()
+                        // Public endpoints needed for the rest of the member onboarding funnel before login
+                        .requestMatchers(HttpMethod.GET, "/api/members/*/group-suggestions").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/groups/*/members").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/payments/memberships/*").permitAll()
                         // Admin-only APIs
                         .requestMatchers(
                                 "/api/admin/**",
-                                "/api/pre-registration/**",
                                 "/api/system-alerts/**",
                                 "/api/member-churn-forecasts/**",
                                 "/api/platform-kpi-snapshots/**",
@@ -71,7 +89,13 @@ public class SecurityConfig {
                                 "/api/payments/**",
                                 "/api/claims/**",
                                 "/api/group-change-requests/**",
-                                "/api/groups/*/chat/**"
+                                "/api/groups",
+                                "/api/groups/**",
+                                "/api/groups/*/chat/**",
+                                // Health module (read/write allowed for authenticated members/admins)
+                                "/api/doctors/**",
+                                "/api/consultations/**",
+                                "/api/produits/**"
                         ).hasAnyRole("MEMBER", "ADMIN")
                         .anyRequest().authenticated()
                 )

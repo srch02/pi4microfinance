@@ -10,6 +10,8 @@ import java.util.Optional;
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
+    void deleteByMember_Id(Long memberId);
+
     List<Payment> findByMember_IdOrderByCreatedAtDesc(Long memberId);
 
     List<Payment> findByMember_IdAndGroup_IdOrderByCreatedAtDesc(Long memberId, Long groupId);

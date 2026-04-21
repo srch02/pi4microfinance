@@ -10,6 +10,8 @@ import java.util.Optional;
 @Repository
 public interface MembershipRepository extends JpaRepository<Membership, Long> {
 
+    void deleteByMember_Id(Long memberId);
+
     /** Memberships that are not ended (pending or active). */
     List<Membership> findByMember_IdAndEndedAtIsNull(Long memberId);
 

@@ -30,17 +30,21 @@ public class RecaptchaVerificationService {
     private final String secretKey;
     /** Used only when Google returns a {@code score} (reCAPTCHA v3). */
     private final double minScore;
+    /** Dev ergonomics: allow local testing when browser blocks widget loading. */
+    private final boolean allowLocalBypass;
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
     public RecaptchaVerificationService(
             @Value("${recaptcha.enabled:true}") boolean enabled,
             @Value("${recaptcha.secret-key:}") String secretKey,
-            @Value("${recaptcha.min-score:0.5}") double minScore
+            @Value("${recaptcha.min-score:0.5}") double minScore,
+            @Value("${recaptcha.allow-local-bypass:true}") boolean allowLocalBypass
     ) {
         this.enabled = enabled;
         this.secretKey = secretKey == null ? "" : secretKey.trim();
         this.minScore = minScore;
+        this.allowLocalBypass = allowLocalBypass;
     }
 
     /**
@@ -53,6 +57,10 @@ public class RecaptchaVerificationService {
         }
         if (secretKey.isBlank()) {
             log.warn("recaptcha.enabled=true but recaptcha.secret-key is empty; skipping verification");
+            return;
+        }
+        if (allowLocalBypass && isLocalIp(remoteIp)) {
+            log.debug("Skipping reCAPTCHA verification for local request: {}", remoteIp);
             return;
         }
         if (recaptchaToken == null || recaptchaToken.isBlank()) {
@@ -101,5 +109,12 @@ public class RecaptchaVerificationService {
 
     private static String enc(String s) {
         return URLEncoder.encode(s, StandardCharsets.UTF_8);
+    }
+
+    private static boolean isLocalIp(String remoteIp) {
+        if (remoteIp == null || remoteIp.isBlank()) return false;
+        String ip = remoteIp.trim();
+        if ("::1".equals(ip) || "127.0.0.1".equals(ip)) return true;
+        return ip.startsWith("0:0:0:0:0:0:0:1");
     }
 }

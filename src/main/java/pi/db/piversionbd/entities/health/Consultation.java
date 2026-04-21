@@ -1,9 +1,9 @@
 package pi.db.piversionbd.entities.health;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
-import lombok.Data;
 import pi.db.piversionbd.entities.groups.Member;
-
+import lombok.Data;
 import java.time.LocalDateTime;
 
 @Entity
@@ -16,23 +16,41 @@ public class Consultation {
     private Long id;
 
     @ManyToOne
-    @JoinColumn(name = "member_id")
+    @JoinColumn(name = "member_id", nullable = false)
+    @JsonIgnoreProperties({
+            // Avoid lazy-init JSON errors when serializing consultations
+            "memberships", "payments", "medicalHistories", "documentUploads",
+            "adherenceTrackingEvents", "memberRewards", "consultations",
+            "pharmacyRecommendations", "healthTrackingEntries",
+            "memberChurnForecasts", "retentionInterventions",
+            "adminReviewQueueItems", "claims", "createdGroups",
+            "preRegistration", "currentGroup"
+    })
     private Member member;
 
     @ManyToOne
-    @JoinColumn(name = "doctor_id")
+    @JoinColumn(name = "doctor_id", nullable = false)
+    @JsonIgnoreProperties({
+            // Prevent recursion / lazy-init; Doctor already ignores consultations too
+            "consultations"
+    })
     private Doctor doctor;
 
-    @Column(name = "scheduled_time")
-    private LocalDateTime scheduledTime;
+    @Column(name = "lien", nullable = false)
+    private String lien;
 
-    @Lob
-    private String diagnosis;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "type_consultation", nullable = false)
+    private TypeConsultation typeConsultation;
 
-    @Lob
-    private String prescription;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "etat_consultation", nullable = false)
+    private EtatConsultation etatConsultation;
 
-    @Column(name = "is_telemedicine")
-    private Boolean telemedicine;
+    @Column(name = "date_consultation")
+    private LocalDateTime dateConsultation;
+
+    @Column(name = "notes")
+    private String notes;
 }
 

@@ -1,8 +1,8 @@
 package pi.db.piversionbd.entities.health;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
-
 import java.util.List;
 
 @Entity
@@ -14,19 +14,27 @@ public class Doctor {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "name", nullable = false)
     private String name;
-    private String specialty;
-    private Float rating;
 
-    @Column(name = "accepts_telemedicine")
-    private Boolean acceptsTelemedicine;
+    @Column(name = "email", nullable = false, unique = true)
+    private String email;
 
-    private String region;
+    @Column(name = "password", nullable = false)
+    private String password;
 
-    @Column(name = "consultation_fee")
-    private Float consultationFee;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "type_doctor", nullable = false)
+    private TypeDoctor typeDoctor;
 
-    @OneToMany(mappedBy = "doctor")
+    @Enumerated(EnumType.STRING)
+    @Column(name = "specialite", nullable = false)
+    private Specialite specialite;
+
+    // This relationship is lazy by default; ignoring it prevents "no session" serialization failures
+    // when returning doctors via REST endpoints.
+    @JsonIgnore
+    @OneToMany(mappedBy = "doctor", cascade = jakarta.persistence.CascadeType.ALL, orphanRemoval = true)
     private List<Consultation> consultations;
 }
 

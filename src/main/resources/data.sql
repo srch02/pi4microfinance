@@ -1,6 +1,10 @@
 -- Seed data: run once when DB is empty (enable spring.sql.init.mode=always and spring.jpa.defer-datasource-initialization=true).
 -- Admin login: username=admin, password=password
 
+-- Ensure utf8mb4 for chatbot messages (bot_response/user_message can contain emojis).
+-- This prevents: "Incorrect string value '\\xF0\\x9F...'" on INSERT.
+ALTER TABLE chatbot_messages CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
 -- 1) Admin user (BCrypt hash for "password")
 INSERT INTO ADMIN_USERS (username, email, role, password, enabled, failed_login_attempts, created_at)
 SELECT 'admin', 'admin@solidarihealth.local', 'ADMIN',

@@ -1,27 +1,17 @@
 package pi.db.piversionbd.config;
 
 import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.info.License;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
-import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import java.util.Set;
-
 @Configuration
 public class OpenApiConfig {
-
-    private static final Set<String> ENTITY_SCHEMA_NAMES = Set.of(
-            "PreRegistration", "Member", "MedicalHistory", "RiskAssessment",
-            "DocumentUpload", "ExcludedCondition", "BlacklistEntry", "AdminReviewQueueItem",
-            "Group", "Membership", "Payment", "Claim", "AdminUser", "GroupPool",
-            "Consultation", "Doctor", "Medication", "HealthTrackingEntry", "PharmacyRecommendation",
-            "MemberChurnForecast", "PlatformKpiSnapshot",
-            "AdherenceTracking", "MemberReward", "RewardCatalogItem", "ClaimScoring"
-    );
 
     @Bean
     public OpenAPI customOpenAPI() {
@@ -37,18 +27,16 @@ public class OpenApiConfig {
         return new OpenAPI()
                 .info(new Info()
                         .title("PI4 Microfinance API")
-                        .version("1.0")
-                        .description("Backend endpoints for Pre-Registration, Admin and Solidarity Groups modules"))
+                        .version("1.0.0")
+                        .description("Backend: Pre-Registration, Admin, Solidarity Groups, and Health modules.")
+                        .contact(new Contact()
+                                .name("Pi4MicroFinance Team")
+                                .email("contact@pi4microfinance.tn")
+                                .url("https://pi4microfinance.tn"))
+                        .license(new License()
+                                .name("Apache 2.0")
+                                .url("https://www.apache.org/licenses/LICENSE-2.0.html")))
                 .components(new Components().addSecuritySchemes("bearerAuth", bearerAuth))
                 .addSecurityItem(securityRequirement);
-    }
-
-    @Bean
-    public OpenApiCustomizer removeEntitySchemasCustomizer() {
-        return openApi -> {
-            if (openApi.getComponents() != null && openApi.getComponents().getSchemas() != null) {
-                ENTITY_SCHEMA_NAMES.forEach(openApi.getComponents().getSchemas()::remove);
-            }
-        };
     }
 }

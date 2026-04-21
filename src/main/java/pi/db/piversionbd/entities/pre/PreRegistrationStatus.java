@@ -30,6 +30,17 @@ public enum PreRegistrationStatus {
     public String toJson() {
         return name();
     }
-    
+
+    /**
+     * Whether a {@link pi.db.piversionbd.entities.groups.Member} may be created for this pre-registration.
+     * {@link #APPROVED} / {@link #ACCEPTED} after admin review; {@link #ACTIVATED} after first membership
+     * payment (member may be missing e.g. if data was reset) — all are treated as “cleared for member row”.
+     */
+    public static boolean allowsMemberCreation(PreRegistrationStatus status) {
+        if (status == null) {
+            return false;
+        }
+        return status == APPROVED || status == ACCEPTED || status == ACTIVATED;
+    }
 }
 

@@ -4,6 +4,7 @@ import pi.db.piversionbd.entities.groups.Member;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 public interface IMemberService {
 
@@ -12,6 +13,12 @@ public interface IMemberService {
     List<Member> getMembersByGroupId(Long groupId);
 
     Member getMemberById(Long id);
+
+    /** Lookup by email (e.g. health / integrations). */
+    Optional<Member> getMemberByEmail(String email);
+
+    /** Lookup by CIN (e.g. health / integrations). */
+    Optional<Member> getMemberByCinNumber(String cinNumber);
 
     Member createMember(Member member);
 

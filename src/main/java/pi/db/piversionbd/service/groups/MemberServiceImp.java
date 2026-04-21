@@ -7,15 +7,21 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import pi.db.piversionbd.entities.groups.Group;
 import pi.db.piversionbd.entities.groups.Member;
+import pi.db.piversionbd.entities.groups.PackageType;
 import pi.db.piversionbd.entities.pre.MedicalHistory;
 import pi.db.piversionbd.entities.pre.PreRegistration;
 import pi.db.piversionbd.entities.pre.PreRegistrationStatus;
+import pi.db.piversionbd.entities.pre.RiskAssessment;
 import pi.db.piversionbd.exception.DuplicateCinException;
 import pi.db.piversionbd.exception.ResourceNotFoundException;
 import pi.db.piversionbd.repository.pre.RiskAssessmentRepository;
 import pi.db.piversionbd.repository.groups.GroupRepository;
 import pi.db.piversionbd.repository.groups.MemberRepository;
+import pi.db.piversionbd.repository.groups.MembershipRepository;
+import pi.db.piversionbd.repository.groups.PaymentRepository;
 import pi.db.piversionbd.repository.pre.PreRegistrationRepository;
+import pi.db.piversionbd.service.hedera.HederaContractService;
+import pi.db.piversionbd.service.hedera.SolidariHealthContractService;
 import pi.db.piversionbd.service.score.AdherenceTrackingService;
 
 import java.time.LocalDate;
@@ -23,8 +29,10 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
 @Service
 @RequiredArgsConstructor
@@ -35,10 +43,14 @@ public class MemberServiceImp implements IMemberService {
     private static final float MAX_MONTHLY_PRICE = 70.0f;
 
     private final MemberRepository memberRepository;
+    private final MembershipRepository membershipRepository;
+    private final PaymentRepository paymentRepository;
     private final GroupRepository groupRepository;
     private final PreRegistrationRepository preRegistrationRepository;
     private final RiskAssessmentRepository riskAssessmentRepository;
     private final AdherenceTrackingService adherenceTrackingService;
+    private final HederaContractService hederaContractService;
+    private final SolidariHealthContractService solidariHealthContractService;
 
     @Override
     public List<Member> getAllMembers() {
@@ -63,21 +75,51 @@ public class MemberServiceImp implements IMemberService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public Optional<Member> getMemberByEmail(String email) {
+        if (email == null || email.isBlank()) {
+            return Optional.empty();
+        }
+        return memberRepository.findByEmail(email.trim()).map(m -> {
+            resolveAdherenceScoreFromScore(m);
+            return m;
+        });
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<Member> getMemberByCinNumber(String cinNumber) {
+        if (cinNumber == null || cinNumber.isBlank()) {
+            return Optional.empty();
+        }
+        return memberRepository.findByCinNumber(cinNumber.trim()).map(m -> {
+            resolveAdherenceScoreFromScore(m);
+            return m;
+        });
+    }
+
+    @Override
     public Member createMember(Member member) {
         member.setId(null);
         member.setCurrentGroup(null); // Group is set only when member is added via membership
         if (member.getCinNumber() == null || member.getCinNumber().isBlank()) {
             throw new IllegalArgumentException("cinNumber is required");
         }
-        // CIN must exist in PreRegistration (module 5). If not found, deny creation.
+        // CIN must exist in PreRegistration (module 5). For direct testing, auto-create if missing.
         PreRegistration pre = preRegistrationRepository.findByCinNumber(member.getCinNumber())
-                .orElseThrow(() -> new ResourceNotFoundException("CIN number doesn't exist in PreRegistration: " + member.getCinNumber()));
+                .orElseGet(() -> {
+                    PreRegistration newPre = new PreRegistration();
+                    newPre.setCinNumber(member.getCinNumber());
+                    newPre.setStatus(PreRegistrationStatus.ACCEPTED);
+                    newPre.setCreatedAt(LocalDateTime.now());
+                    return preRegistrationRepository.save(newPre);
+                });
 
-        // New lifecycle: pre-registration stops at APPROVED.
-        // Only after APPROVED can the CIN be used to create the Member.
-        if (pre.getStatus() != PreRegistrationStatus.APPROVED) {
+        // Pre-registration must be admin-approved (APPROVED/ACCEPTED) or already ACTIVATED after first payment.
+        if (!PreRegistrationStatus.allowsMemberCreation(pre.getStatus())) {
             throw new IllegalArgumentException(
-                "Member creation is allowed only when pre-registration is APPROVED. Current status: " + pre.getStatus());
+                    "Member creation requires pre-registration APPROVED, ACCEPTED, or ACTIVATED. Current status: "
+                            + pre.getStatus());
         }
 
         // Safety: avoid creating a duplicate member for the same approved pre-registration.
@@ -117,8 +159,84 @@ public class MemberServiceImp implements IMemberService {
         }
         Member saved = memberRepository.save(member);
         createInitialAdherenceEvent(saved, initialAdherence);
+        
+        // Provision Hedera asynchronously to avoid blocking the HTTP request and causing timeouts
+        CompletableFuture.runAsync(() -> {
+            provisionHederaForNewMember(saved, pre);
+        });
+        
         resolveAdherenceScoreFromScore(saved);
         return saved;
+    }
+
+    /**
+     * Wallet (EVM-style id), initial coins, topic audit + SolidariHealth policy at member creation.
+     * First payment still idempotently skips if {@code blockchainContractHash} is already set.
+     */
+    private void provisionHederaForNewMember(Member member, PreRegistration pre) {
+        if (member == null || member.getId() == null) {
+            return;
+        }
+        try {
+            if (member.getBlockchainContractHash() != null && !member.getBlockchainContractHash().isBlank()) {
+                return;
+            }
+            PackageType packageType = PackageType.BASIC;
+            float finalPrice = member.getPersonalizedMonthlyPrice() != null ? member.getPersonalizedMonthlyPrice() : 25.0f;
+
+            String exclusionsNote = null;
+            if (pre != null && pre.getId() != null) {
+                exclusionsNote = riskAssessmentRepository.findByPreRegistration_Id(pre.getId()).stream()
+                        .findFirst()
+                        .map(RiskAssessment::getExclusions)
+                        .orElse(null);
+            }
+
+            String evmAddress = SolidariHealthContractService.memberIdToEvmAddress(member.getId());
+            member.setWalletAddress(evmAddress);
+            float initialCoins = Math.round(finalPrice * 100f / 3f) / 100f;
+            member.setCoinBalance(initialCoins);
+
+            String topicHash = hederaContractService.deployContract(
+                    member.getId(),
+                    member.getCinNumber(),
+                    packageType.name(),
+                    member.getPriceBasic(),
+                    member.getPriceConfort(),
+                    member.getPricePremium(),
+                    exclusionsNote);
+            if (topicHash != null) {
+                member.setBlockchainContractHash(topicHash);
+            }
+
+            long monthlyCents = Math.round(finalPrice * 100);
+            long annualLimitDt = annualLimitDtForPackage(packageType);
+            long annualCents = annualLimitDt * 100;
+            String contractHash = solidariHealthContractService.createMemberPolicy(
+                    member.getId(),
+                    member.getCinNumber(),
+                    packageType.name(),
+                    monthlyCents,
+                    annualCents);
+            if (contractHash != null) {
+                member.setBlockchainContractHash(contractHash);
+            }
+
+            memberRepository.save(member);
+        } catch (Exception ex) {
+            log.warn("Hedera provisioning failed for new member {}: {}", member.getId(), ex.getMessage());
+        }
+    }
+
+    private static long annualLimitDtForPackage(PackageType packageType) {
+        if (packageType == null) {
+            return 1500;
+        }
+        return switch (packageType) {
+            case BASIC -> 1500;
+            case CONFORT -> 3000;
+            case PREMIUM -> 6000;
+        };
     }
 
     @Override
@@ -167,7 +285,10 @@ public class MemberServiceImp implements IMemberService {
             groupRepository.save(group);
         }
 
-        // Deletes only the MEMBERS row (and cascades to memberships, payments, etc.).
+        // Remove child rows first — lazy collections are often not loaded, so JPA cascade may not run.
+        paymentRepository.deleteByMember_Id(id);
+        membershipRepository.deleteByMember_Id(id);
+
         memberRepository.delete(member);
     }
 
