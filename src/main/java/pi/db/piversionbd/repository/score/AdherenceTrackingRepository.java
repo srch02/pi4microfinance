@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import pi.db.piversionbd.entities.score.AdherenceEventType;
 import pi.db.piversionbd.entities.score.AdherenceTracking;
 
 import java.util.Optional;
@@ -22,4 +23,8 @@ public interface AdherenceTrackingRepository extends JpaRepository<AdherenceTrac
     @Modifying(clearAutomatically = true)
     @Query("UPDATE AdherenceTracking a SET a.relatedClaim = null WHERE a.relatedClaim.id = :claimId")
     void unlinkRelatedClaim(@Param("claimId") Long claimId);
+    boolean existsByMember_IdAndEventType(Long memberId, AdherenceEventType eventType);
+
+    boolean existsByRelatedClaim_IdAndEventType(Long claimId, AdherenceEventType eventType);
+
 }

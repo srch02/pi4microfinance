@@ -1,44 +1,405 @@
 package pi.db.piversionbd.service.score;
 
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import pi.db.piversionbd.entities.groups.Member;
-import pi.db.piversionbd.entities.score.*;
+import pi.db.piversionbd.entities.groups.Membership;
+import pi.db.piversionbd.entities.pre.DocumentUpload;
+import pi.db.piversionbd.entities.score.Claim;
+import pi.db.piversionbd.entities.score.ClaimScoring;
+import pi.db.piversionbd.entities.score.ClaimStatus;
 import pi.db.piversionbd.exception.ResourceNotFoundException;
-import pi.db.piversionbd.repository.groups.MemberRepository;
+import pi.db.piversionbd.repository.groups.MembershipRepository;
+import pi.db.piversionbd.repository.groups.PaymentRepository;
+import pi.db.piversionbd.repository.pre.DocumentUploadRepository;
 import pi.db.piversionbd.repository.score.ClaimRepository;
-import pi.db.piversionbd.service.groups.MembershipClaimConsumptionService;
-import pi.db.piversionbd.service.hedera.HederaClaimService;
-import pi.db.piversionbd.service.hedera.SolidariHealthContractService;
 import pi.db.piversionbd.repository.score.ClaimScoringRepository;
-import pi.db.piversionbd.service.notifications.TelegramClaimMessages;
-import pi.db.piversionbd.service.notifications.TelegramNotificationService;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 @Transactional
 public class ClaimScoringService {
 
-    private static final Logger log = LoggerFactory.getLogger(ClaimScoringService.class);
-
-    private static final BigDecimal AUTO_APPROVE_MIN_SCORE = BigDecimal.valueOf(90);
-    private static final BigDecimal LOW_SCORE_THRESHOLD = BigDecimal.valueOf(50);
-
-    private final ClaimScoringRepository claimScoringRepository;
     private final ClaimRepository claimRepository;
-    private final MemberRepository memberRepository;
-    private final TelegramNotificationService telegramNotificationService;
-    private final HederaClaimService hederaClaimService;
-    private final SolidariHealthContractService solidariHealthContractService;
-    private final MembershipClaimConsumptionService membershipClaimConsumptionService;
+    private final ClaimScoringRepository claimScoringRepository;
+    private final PaymentRepository paymentRepository;
+    private final MembershipRepository membershipRepository;
+    private final DocumentUploadRepository documentUploadRepository;
 
+    @Value("${claims.scoring.auto-approve-threshold:85}")
+    private BigDecimal autoApproveThreshold;
+
+    @Value("${claims.scoring.manual-review-threshold:60}")
+    private BigDecimal manualReviewThreshold;
+
+    @Value("${claims.scoring.fraud-document-threshold:0.80}")
+    private BigDecimal fraudDocumentThreshold;
+
+    public Claim applyAutomaticScoringOnSubmit(Long claimId) {
+        Claim claim = claimRepository.findDetailsById(claimId)
+                .orElseThrow(() -> new ResourceNotFoundException("Claim introuvable: " + claimId));
+
+        if (claim.getMember() == null || claim.getMember().getId() == null) {
+            throw new IllegalArgumentException("Claim sans membre.");
+        }
+
+        if (claim.getGroup() == null || claim.getGroup().getId() == null) {
+            throw new IllegalArgumentException("Claim sans groupe.");
+        }
+
+        Long memberId = claim.getMember().getId();
+        Long groupId = claim.getGroup().getId();
+
+        Membership membership = membershipRepository
+                .findByMember_IdAndGroup_IdAndEndedAtIsNull(memberId, groupId)
+                .orElse(null);
+
+        List<DocumentUpload> documents = documentUploadRepository.findByClaim_Id(claimId);
+
+        long paymentCount = paymentRepository.countByMember_IdAndGroup_Id(memberId, groupId);
+
+        List<String> indicators = new ArrayList<>();
+
+        BigDecimal reliabilityScore = calculateReliabilityScore(paymentCount, indicators);
+        BigDecimal documentScore = calculateDocumentScore(documents, indicators);
+        BigDecimal medicalScore = calculateMedicalScore(claim, membership, indicators);
+        BigDecimal complianceScore = calculateComplianceScore(claim, membership, indicators);
+
+        BigDecimal totalScore = calculateTotalScore(
+                reliabilityScore,
+                documentScore,
+                medicalScore,
+                complianceScore
+        );
+
+        boolean fraudDetected = hasFraudIndicator(indicators);
+
+        ClaimScoring scoring = claimScoringRepository.findByClaimId(claimId)
+                .orElseGet(ClaimScoring::new);
+
+        scoring.setClaim(claim);
+        scoring.setReliabilityScore(reliabilityScore);
+        scoring.setDocumentScore(documentScore);
+        scoring.setMedicalScore(medicalScore);
+        scoring.setComplianceScore(complianceScore);
+        scoring.setTotalScore(totalScore);
+        scoring.setExcludedConditionDetected(false);
+        scoring.setFraudIndicators(String.join("\n", indicators));
+        scoring.setScoredAt(LocalDateTime.now());
+
+        claimScoringRepository.save(scoring);
+
+        claim.setFinalScoreSnapshot(totalScore);
+        claim.setExcludedConditionDetected(false);
+        claim.setDecisionAt(LocalDateTime.now());
+        claim.setDecisionComment(buildDecisionComment(totalScore, indicators));
+
+        applyDecision(claim, totalScore, documentScore, fraudDetected);
+
+        return claimRepository.save(claim);
+    }
+
+    /*
+     * On garde cet ancien nom parce que ClaimService l'appelle déjà.
+     */
+    public Claim applyDefaultScoringOnSubmit(Long claimId) {
+        return applyAutomaticScoringOnSubmit(claimId);
+    }
+
+    private BigDecimal calculateReliabilityScore(long paymentCount, List<String> indicators) {
+        double score = 40.0;
+
+        if (paymentCount >= 12) {
+            score += 40;
+        } else if (paymentCount >= 6) {
+            score += 32;
+        } else if (paymentCount >= 3) {
+            score += 22;
+        } else if (paymentCount >= 1) {
+            score += 12;
+            indicators.add("Reliability: historique de paiement faible (" + paymentCount + " paiement(s)).");
+        } else {
+            indicators.add("Reliability: aucun paiement trouvé.");
+        }
+
+        /*
+         * Bonus neutre : membre existant et lié au claim.
+         */
+        score += 20;
+
+        return bd(score);
+    }
+
+    private BigDecimal calculateDocumentScore(List<DocumentUpload> documents, List<String> indicators) {
+        if (documents == null || documents.isEmpty()) {
+            indicators.add("Document: aucun bulletin attaché.");
+            return bd(15);
+        }
+
+        double score = 30.0;
+
+        boolean hasClaimBulletin = false;
+        boolean hasValidContentType = false;
+        boolean hasValidSize = false;
+
+        for (DocumentUpload doc : documents) {
+            String documentType = value(doc.getDocumentType());
+            String contentType = value(doc.getContentType()).toLowerCase();
+
+            if ("CLAIM_BULLETIN".equalsIgnoreCase(documentType)) {
+                hasClaimBulletin = true;
+            }
+
+            if (contentType.contains("pdf")
+                    || contentType.contains("png")
+                    || contentType.contains("jpeg")
+                    || contentType.contains("jpg")) {
+                hasValidContentType = true;
+            }
+
+            if (doc.getSizeBytes() != null
+                    && doc.getSizeBytes() > 0
+                    && doc.getSizeBytes() <= 10L * 1024L * 1024L) {
+                hasValidSize = true;
+            }
+
+            if (doc.getFraudDetectionScore() != null) {
+                BigDecimal fraudScore = BigDecimal.valueOf(doc.getFraudDetectionScore());
+
+                if (fraudScore.compareTo(fraudDocumentThreshold) >= 0) {
+                    indicators.add("FRAUD: document suspect, fraudDetectionScore=" + doc.getFraudDetectionScore());
+                    score -= 45;
+                } else if (fraudScore.compareTo(BigDecimal.valueOf(0.50)) >= 0) {
+                    indicators.add("Document: suspicion moyenne, fraudDetectionScore=" + doc.getFraudDetectionScore());
+                    score -= 15;
+                }
+            }
+
+            if (doc.getExtractedText() != null && !doc.getExtractedText().isBlank()) {
+                score += 5;
+            }
+        }
+
+        if (hasClaimBulletin) {
+            score += 30;
+        } else {
+            indicators.add("Document: aucun document marqué CLAIM_BULLETIN.");
+        }
+
+        if (hasValidContentType) {
+            score += 20;
+        } else {
+            indicators.add("Document: type de fichier invalide ou inconnu.");
+        }
+
+        if (hasValidSize) {
+            score += 15;
+        } else {
+            indicators.add("Document: taille de fichier invalide ou inconnue.");
+        }
+
+        return bd(score);
+    }
+
+    private BigDecimal calculateMedicalScore(
+            Claim claim,
+            Membership membership,
+            List<String> indicators
+    ) {
+        if (claim.getAmountRequested() == null
+                || claim.getAmountRequested().compareTo(BigDecimal.ZERO) <= 0) {
+            indicators.add("Medical: montant demandé invalide.");
+            return bd(0);
+        }
+
+        BigDecimal amountRequested = claim.getAmountRequested();
+
+        if (membership == null) {
+            indicators.add("Medical: membership introuvable.");
+            return bd(30);
+        }
+
+        if (membership.getAnnualLimit() != null && membership.getAnnualLimit() > 0f) {
+            BigDecimal remaining = BigDecimal.valueOf(membership.getRemainingAnnualAmount());
+
+            if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
+                indicators.add("Medical: couverture annuelle épuisée.");
+                return bd(0);
+            }
+
+            BigDecimal ratio = amountRequested.divide(remaining, 4, RoundingMode.HALF_UP);
+
+            if (ratio.compareTo(BigDecimal.valueOf(0.30)) <= 0) {
+                return bd(100);
+            }
+
+            if (ratio.compareTo(BigDecimal.valueOf(0.60)) <= 0) {
+                return bd(85);
+            }
+
+            if (ratio.compareTo(BigDecimal.valueOf(0.85)) <= 0) {
+                indicators.add("Medical: montant élevé par rapport à la couverture restante.");
+                return bd(70);
+            }
+
+            if (ratio.compareTo(BigDecimal.ONE) <= 0) {
+                indicators.add("Medical: montant très proche de la couverture restante.");
+                return bd(55);
+            }
+
+            indicators.add("Medical: montant supérieur à la couverture restante.");
+            return bd(0);
+        }
+
+        /*
+         * Si pas de plafond annuel configuré, on utilise une logique simple par montant.
+         */
+        if (amountRequested.compareTo(BigDecimal.valueOf(100)) <= 0) {
+            return bd(95);
+        }
+
+        if (amountRequested.compareTo(BigDecimal.valueOf(300)) <= 0) {
+            return bd(80);
+        }
+
+        if (amountRequested.compareTo(BigDecimal.valueOf(700)) <= 0) {
+            indicators.add("Medical: montant élevé, revue recommandée.");
+            return bd(65);
+        }
+
+        indicators.add("Medical: montant très élevé, revue manuelle recommandée.");
+        return bd(45);
+    }
+
+    private BigDecimal calculateComplianceScore(
+            Claim claim,
+            Membership membership,
+            List<String> indicators
+    ) {
+        double score = 0.0;
+
+        if (membership == null) {
+            indicators.add("Compliance: aucune membership active trouvée.");
+            return bd(0);
+        }
+
+        if (Membership.STATUS_ACTIVE.equalsIgnoreCase(membership.getStatus())) {
+            score += 45;
+        } else {
+            indicators.add("Compliance: membership non active.");
+        }
+
+        if (membership.getAnnualLimit() == null || membership.getAnnualLimit() <= 0f) {
+            score += 25;
+        } else if (membership.getRemainingAnnualAmount() > 0f) {
+            score += 25;
+        } else {
+            indicators.add("Compliance: plafond annuel consommé.");
+        }
+
+        if (membership.getConsultationsLimit() == null || membership.getConsultationsLimit() <= 0) {
+            score += 15;
+        } else if (membership.getRemainingConsultations() > 0) {
+            score += 15;
+        } else {
+            indicators.add("Compliance: aucune consultation restante.");
+        }
+
+        if (claim.getAmountRequested() != null
+                && claim.getAmountRequested().compareTo(BigDecimal.ZERO) > 0) {
+            score += 15;
+        } else {
+            indicators.add("Compliance: montant demandé invalide.");
+        }
+
+        return bd(score);
+    }
+
+    private BigDecimal calculateTotalScore(
+            BigDecimal reliabilityScore,
+            BigDecimal documentScore,
+            BigDecimal medicalScore,
+            BigDecimal complianceScore
+    ) {
+        BigDecimal total = BigDecimal.ZERO;
+
+        total = total.add(reliabilityScore.multiply(BigDecimal.valueOf(0.25)));
+        total = total.add(documentScore.multiply(BigDecimal.valueOf(0.25)));
+        total = total.add(medicalScore.multiply(BigDecimal.valueOf(0.30)));
+        total = total.add(complianceScore.multiply(BigDecimal.valueOf(0.20)));
+
+        return total.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private void applyDecision(
+            Claim claim,
+            BigDecimal totalScore,
+            BigDecimal documentScore,
+            boolean fraudDetected
+    ) {
+        if (fraudDetected) {
+            claim.setStatus(ClaimStatus.REJECTED_FRAUD);
+            claim.setAmountApproved(null);
+            return;
+        }
+
+        if (totalScore.compareTo(autoApproveThreshold) >= 0
+                && documentScore.compareTo(BigDecimal.valueOf(70)) >= 0) {
+            claim.setStatus(ClaimStatus.APPROVED_AUTO);
+            claim.setAmountApproved(claim.getAmountRequested());
+            return;
+        }
+
+        if (totalScore.compareTo(manualReviewThreshold) >= 0) {
+            claim.setStatus(ClaimStatus.MANUAL_REVIEW);
+            claim.setAmountApproved(null);
+            return;
+        }
+
+        claim.setStatus(ClaimStatus.REJECTED_LOW_SCORE);
+        claim.setAmountApproved(null);
+    }
+
+    private String buildDecisionComment(BigDecimal totalScore, List<String> indicators) {
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("Automatic scoring completed. Total score=")
+                .append(totalScore)
+                .append("/100.");
+
+        if (!indicators.isEmpty()) {
+            sb.append("\nIndicators:\n");
+
+            for (String indicator : indicators) {
+                sb.append("- ").append(indicator).append("\n");
+            }
+        }
+
+        return sb.toString();
+    }
+
+    private boolean hasFraudIndicator(List<String> indicators) {
+        return indicators.stream()
+                .anyMatch(indicator -> indicator != null && indicator.startsWith("FRAUD:"));
+    }
+
+    private BigDecimal bd(double value) {
+        double capped = Math.max(0.0, Math.min(100.0, value));
+
+        return BigDecimal.valueOf(capped)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private String value(String value) {
+        return value == null ? "" : value;
+    }
     @Transactional(readOnly = true)
     public ClaimScoring getById(Long id) {
         return claimScoringRepository.findById(id)
@@ -51,200 +412,57 @@ public class ClaimScoringService {
                 .orElseThrow(() -> new ResourceNotFoundException("ClaimScoring introuvable pour claimId: " + claimId));
     }
 
-    /**
-     * After claim creation: applies a default high score so {@link #applyAutomaticDecision} runs (auto-approve if ≥90, Telegram, wallet).
-     * Used when {@code claims.auto-score-on-submit=true}; replace later with real scoring input.
-     */
-    public void applyDefaultScoringOnSubmit(Long claimId) {
-        ClaimScoring body = new ClaimScoring();
-        BigDecimal s = BigDecimal.valueOf(95);
-        body.setReliabilityScore(s);
-        body.setDocumentScore(s);
-        body.setMedicalScore(s);
-        body.setComplianceScore(s);
-        body.setTotalScore(s);
-        body.setExcludedConditionDetected(false);
-        body.setFraudIndicators(null);
-        upsertByClaimId(claimId, body);
-    }
-
-    /**
-     * Upsert: crée ou met à jour le scoring d'un claim.
-     */
     public ClaimScoring upsertByClaimId(Long claimId, ClaimScoring request) {
-        Claim claim = claimRepository.findById(claimId)
+        Claim claim = claimRepository.findDetailsById(claimId)
                 .orElseThrow(() -> new ResourceNotFoundException("Claim introuvable: " + claimId));
 
         ClaimScoring scoring = claimScoringRepository.findByClaimId(claimId)
                 .orElseGet(ClaimScoring::new);
 
         scoring.setClaim(claim);
-        scoring.setReliabilityScore(nullSafe(request.getReliabilityScore()));
-        scoring.setDocumentScore(nullSafe(request.getDocumentScore()));
-        scoring.setMedicalScore(nullSafe(request.getMedicalScore()));
-        scoring.setComplianceScore(nullSafe(request.getComplianceScore()));
-        scoring.setTotalScore(nullSafe(request.getTotalScore()));
+
+        scoring.setReliabilityScore(request.getReliabilityScore());
+        scoring.setDocumentScore(request.getDocumentScore());
+        scoring.setMedicalScore(request.getMedicalScore());
+        scoring.setComplianceScore(request.getComplianceScore());
+
+        BigDecimal totalScore = request.getTotalScore();
+
+        if (totalScore == null) {
+            totalScore = calculateTotalScore(
+                    request.getReliabilityScore() != null ? request.getReliabilityScore() : BigDecimal.ZERO,
+                    request.getDocumentScore() != null ? request.getDocumentScore() : BigDecimal.ZERO,
+                    request.getMedicalScore() != null ? request.getMedicalScore() : BigDecimal.ZERO,
+                    request.getComplianceScore() != null ? request.getComplianceScore() : BigDecimal.ZERO
+            );
+        }
+
+        scoring.setTotalScore(totalScore);
         scoring.setExcludedConditionDetected(request.isExcludedConditionDetected());
         scoring.setFraudIndicators(request.getFraudIndicators());
-        scoring.setScoredAt(request.getScoredAt() == null ? LocalDateTime.now() : request.getScoredAt());
+        scoring.setScoredAt(LocalDateTime.now());
 
         ClaimScoring saved = claimScoringRepository.save(scoring);
 
-        // Snapshot rapide côté Claim
-        claim.setFinalScoreSnapshot(saved.getTotalScore());
-        if (isFinalClaimStatus(claim.getStatus())) {
-            claimRepository.save(claim);
-            return saved;
+        claim.setFinalScoreSnapshot(totalScore);
+        claim.setExcludedConditionDetected(request.isExcludedConditionDetected());
+        claim.setDecisionAt(LocalDateTime.now());
+        claim.setDecisionComment("Manual scoring updated. Total score=" + totalScore + "/100.");
+
+        if (request.isExcludedConditionDetected()) {
+            claim.setStatus(ClaimStatus.REJECTED_EXCLUSION);
+            claim.setAmountApproved(null);
+        } else {
+            applyDecision(
+                    claim,
+                    totalScore,
+                    request.getDocumentScore() != null ? request.getDocumentScore() : BigDecimal.ZERO,
+                    false
+            );
         }
-        applyAutomaticDecision(claim, saved);
-        if (claim.getStatus() == ClaimStatus.SUBMITTED) {
-            claim.setStatus(ClaimStatus.SCORED);
-        }
+
         claimRepository.save(claim);
 
         return saved;
-    }
-
-    public void deleteByClaimId(Long claimId) {
-        if (!claimScoringRepository.existsByClaimId(claimId)) {
-            throw new ResourceNotFoundException("ClaimScoring introuvable pour claimId: " + claimId);
-        }
-        claimScoringRepository.deleteByClaimId(claimId);
-    }
-
-    private BigDecimal nullSafe(BigDecimal value) {
-        return value == null ? BigDecimal.ZERO : value;
-    }
-
-    private static boolean isFinalClaimStatus(ClaimStatus status) {
-        return status == ClaimStatus.APPROVED_AUTO
-                || status == ClaimStatus.APPROVED_MANUAL
-                || status == ClaimStatus.REJECTED_EXCLUSION
-                || status == ClaimStatus.REJECTED_FRAUD
-                || status == ClaimStatus.REJECTED_LOW_SCORE
-                || status == ClaimStatus.PAID
-                || status == ClaimStatus.CANCELLED;
-    }
-
-    private void applyAutomaticDecision(Claim claim, ClaimScoring scoring) {
-        if (scoring.isExcludedConditionDetected()) {
-            setDecision(
-                    claim,
-                    ClaimStatus.REJECTED_EXCLUSION,
-                    ClaimDecisionReason.EXCLUDED_CONDITION,
-                    "Auto-rejected: excluded medical condition detected."
-            );
-            claim.setExcludedConditionDetected(true);
-            return;
-        }
-
-        String fraudIndicators = scoring.getFraudIndicators() == null ? "" : scoring.getFraudIndicators().toLowerCase();
-        boolean fraudFlag = fraudIndicators.contains("fraud")
-                || fraudIndicators.contains("suspicious")
-                || fraudIndicators.contains("forg")
-                || fraudIndicators.contains("fake");
-        if (fraudFlag) {
-            setDecision(
-                    claim,
-                    ClaimStatus.REJECTED_FRAUD,
-                    ClaimDecisionReason.FRAUD_SUSPECTED,
-                    "Auto-rejected: fraud indicators detected by scoring."
-            );
-            return;
-        }
-
-        BigDecimal total = nullSafe(scoring.getTotalScore());
-        if (total.compareTo(LOW_SCORE_THRESHOLD) < 0) {
-            // Your rule: under 50 => admin approval required (not auto-reject).
-            claim.setStatus(ClaimStatus.MANUAL_REVIEW);
-            claim.setDecisionReason(ClaimDecisionReason.LOW_SCORE);
-            claim.setDecisionComment("Admin approval required (score below " + LOW_SCORE_THRESHOLD + "). Handled within 24 hours.");
-            claim.setDecisionAt(LocalDateTime.now());
-            notifyMember(claim, TelegramClaimMessages.buildAdminApprovalLowScore(claim));
-            return;
-        }
-        if (total.compareTo(AUTO_APPROVE_MIN_SCORE) >= 0) {
-            ClaimStatus previous = claim.getStatus();
-            setDecision(
-                    claim,
-                    ClaimStatus.APPROVED_AUTO,
-                    ClaimDecisionReason.AUTO_APPROVAL,
-                    "Auto-approved by scoring engine."
-            );
-            // If no explicit approved amount was set, approve the requested amount for now.
-            if (claim.getAmountApproved() == null && claim.getAmountRequested() != null) {
-                claim.setAmountApproved(claim.getAmountRequested());
-            }
-            membershipClaimConsumptionService.consumeOnApproval(claim, previous);
-            processAutoApprovalToWallet(claim);
-            notifyMember(claim, TelegramClaimMessages.buildAutoApproved(claim));
-            return;
-        }
-
-        claim.setStatus(ClaimStatus.MANUAL_REVIEW);
-        claim.setDecisionReason(null);
-        claim.setDecisionComment("Your claim will be handled within 24 hours.");
-        claim.setDecisionAt(LocalDateTime.now());
-        notifyMember(claim, TelegramClaimMessages.buildManual24h(claim));
-    }
-
-    private static void setDecision(Claim claim, ClaimStatus status, ClaimDecisionReason reason, String comment) {
-        claim.setStatus(status);
-        claim.setDecisionReason(reason);
-        claim.setDecisionComment(comment);
-        claim.setDecisionAt(LocalDateTime.now());
-    }
-
-    private void notifyMember(Claim claim, String message) {
-        try {
-            if (claim == null || claim.getMember() == null || claim.getMember().getId() == null) {
-                return;
-            }
-            // Reload member from DB so telegram_chat_id is current (lazy proxy may be stale or unloaded).
-            String chatId = memberRepository.findById(claim.getMember().getId())
-                    .map(Member::getTelegramChatId)
-                    .orElse(null);
-            if (chatId == null || chatId.isBlank()) {
-                log.info(
-                        "Telegram claim notification skipped: member id={} has no telegram_chat_id (claim id={}). Link via PATCH /api/members/me/telegram",
-                        claim.getMember().getId(), claim.getId());
-                return;
-            }
-            telegramNotificationService.sendMessage(chatId, message);
-        } catch (Exception e) {
-            log.warn("Telegram notify failed for claim {}: {}", claim != null ? claim.getId() : null, e.getMessage());
-        }
-    }
-
-    private void processAutoApprovalToWallet(Claim claim) {
-        try {
-            if (claim == null || claim.getAmountApproved() == null) return;
-            if (claim.getAmountApproved().compareTo(BigDecimal.ZERO) <= 0) return;
-
-            BigDecimal reimbursementCoins = claim.getAmountApproved()
-                    .divide(BigDecimal.valueOf(3), 4, RoundingMode.HALF_UP);
-            // Topic audit (CLAIMS.blockchain_hash); may be null if topic submit fails.
-            hederaClaimService.recordReimbursement(claim, reimbursementCoins);
-
-            Long memberId = claim.getMember() != null ? claim.getMember().getId() : null;
-            if (memberId != null) {
-                long amountCents = claim.getAmountApproved().multiply(BigDecimal.valueOf(100)).longValue();
-                long fraudScore = claim.getFinalScoreSnapshot() != null
-                        ? claim.getFinalScoreSnapshot().longValue() : 90L;
-                String contractTx = solidariHealthContractService.processClaim(
-                        memberId, amountCents, claim.getClaimNumber(), fraudScore, "APPROVED_AUTO");
-                // If topic audit did not persist a hash, store the contract call transaction id instead.
-                if (claim.getBlockchainHash() == null && contractTx != null && !contractTx.isBlank()) {
-                    claim.setBlockchainHash(contractTx);
-                }
-            }
-            if (claim.getBlockchainHash() == null) {
-                log.warn(
-                        "Claim id={}: no Hedera tx id stored (topic audit and/or contract call failed). Check logs for HEDERA / CONTRACT; verify hedera.topic-transactions, hedera.contract-id, operator key, and network.",
-                        claim.getId());
-            }
-        } catch (Exception e) {
-            log.warn("Blockchain processing failed for claim {}: {}", claim != null ? claim.getId() : null, e.getMessage(), e);
-        }
     }
 }

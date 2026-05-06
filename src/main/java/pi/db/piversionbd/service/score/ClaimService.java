@@ -41,6 +41,15 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -63,12 +72,15 @@ public class ClaimService {
     private final AdminReviewQueueItemRepository adminReviewQueueItemRepository;
     private final AdherenceTrackingRepository adherenceTrackingRepository;
     private final BlockchainTransactionRepository blockchainTransactionRepository;
-
+    private final ClaimRewardService claimRewardService;
     @Value("${claims.auto-score-on-submit:true}")
     private boolean autoScoreOnSubmit;
 
+    @Value("${claims.minimum-payments-before-claim:0}")
+    private long minimumPaymentsBeforeClaim;
 
-
+    @Value("${claim.bulletins.upload-dir:uploads/claim-bulletins}")
+    private String claimBulletinsUploadDir;
 
     public Claim create(Claim claim) {
         if (claim.getClaimNumber() == null || claim.getClaimNumber().isBlank()) {
@@ -264,18 +276,24 @@ public class ClaimService {
         }
 
         // Rule: 5 payments minimum before first claim.
+        //long paymentCount = paymentRepository.countByMember_IdAndGroup_Id(req.memberId, req.groupId);
+        //if (paymentCount < 5) {
+            //throw new IllegalArgumentException("Claim not allowed yet: minimum 5 payments are required.");
+        //}
         long paymentCount = paymentRepository.countByMember_IdAndGroup_Id(req.memberId, req.groupId);
-        if (paymentCount < 5) {
-            throw new IllegalArgumentException("Claim not allowed yet: minimum 5 payments are required.");
-        }
 
-        // Rule: one claim per month (member+group).
-        YearMonth ym = YearMonth.now();
-        LocalDateTime from = ym.atDay(1).atStartOfDay();
-        LocalDateTime to = ym.atEndOfMonth().atTime(23, 59, 59);
-        if (claimRepository.existsByMember_IdAndGroup_IdAndCreatedAtBetween(req.memberId, req.groupId, from, to)) {
-            throw new IllegalArgumentException("Claim already submitted this month for this group.");
+        if (paymentCount < minimumPaymentsBeforeClaim) {
+            throw new IllegalArgumentException(
+                    "Claim not allowed yet: minimum " + minimumPaymentsBeforeClaim + " payments are required."
+            );
         }
+        // Rule: one claim per month (member+group).
+        //YearMonth ym = YearMonth.now();
+        //LocalDateTime from = ym.atDay(1).atStartOfDay();
+        //LocalDateTime to = ym.atEndOfMonth().atTime(23, 59, 59);
+        //if (claimRepository.existsByMember_IdAndGroup_IdAndCreatedAtBetween(req.memberId, req.groupId, from, to)) {
+          //  throw new IllegalArgumentException("Claim already submitted this month for this group.");
+        //}
 
         // Rule: amount cannot exceed remaining annual coverage for this membership.
         if (membership.getAnnualLimit() != null && membership.getAnnualLimit() > 0f) {
@@ -302,7 +320,7 @@ public class ClaimService {
         c.setAmountRequested(req.amountRequested);
         c.setStatus(ClaimStatus.SUBMITTED);
         Claim saved = claimRepository.save(c);
-
+        claimRewardService.handleClaimSubmitted(saved);
         if (req.documentUploadIds != null && !req.documentUploadIds.isEmpty()) {
             List<Long> distinctDocIds = req.documentUploadIds.stream().distinct().collect(Collectors.toList());
             List<DocumentUpload> docs = documentUploadRepository.findByIdIn(distinctDocIds);
@@ -354,6 +372,87 @@ public class ClaimService {
                 c.getMember() != null ? c.getMember().getId() : null,
                 c.getGroup() != null ? c.getGroup().getId() : null
         );
+    }
+    @Transactional(rollbackFor = IOException.class)
+    public Claim createWithBulletin(ClaimCreateRequest req, MultipartFile bulletin) throws IOException {
+        if (bulletin == null || bulletin.isEmpty()) {
+            throw new IllegalArgumentException("Bulletin obligatoire.");
+        }
+
+        validateBulletinFile(bulletin);
+
+        Claim saved = createFromIds(req);
+
+        saveBulletinForClaim(saved, bulletin);
+
+        if (autoScoreOnSubmit) {
+            try {
+                return claimScoringService.applyAutomaticScoringOnSubmit(saved.getId());
+            } catch (Exception e) {
+                log.warn("Auto-scoring after bulletin upload failed for claim {}: {}", saved.getId(), e.getMessage(), e);
+            }
+        }
+
+        return claimRepository.findDetailsById(saved.getId()).orElse(saved);
+    }
+    private void validateBulletinFile(MultipartFile file) {
+        if (file.getSize() > 10 * 1024 * 1024) {
+            throw new IllegalArgumentException("Le fichier ne doit pas dépasser 10MB.");
+        }
+
+        String originalFilename = file.getOriginalFilename();
+        if (originalFilename == null || originalFilename.isBlank()) {
+            throw new IllegalArgumentException("Nom du fichier invalide.");
+        }
+
+        String extension = getExtension(originalFilename);
+
+        if (!List.of(".pdf", ".png", ".jpg", ".jpeg").contains(extension)) {
+            throw new IllegalArgumentException("Format non autorisé. Utilisez PDF, PNG, JPG ou JPEG.");
+        }
+    }
+
+    private void saveBulletinForClaim(Claim claim, MultipartFile file) throws IOException {
+        Path uploadDir = Paths.get(claimBulletinsUploadDir)
+                .toAbsolutePath()
+                .normalize();
+
+        Files.createDirectories(uploadDir);
+
+        String originalFilename = file.getOriginalFilename();
+        if (originalFilename == null || originalFilename.isBlank()) {
+            originalFilename = "bulletin";
+        }
+
+        originalFilename = StringUtils.cleanPath(originalFilename);
+
+        String extension = getExtension(originalFilename);
+        String storedFilename = "claim-" + claim.getId() + "-" + UUID.randomUUID() + extension;
+
+        Path targetPath = uploadDir.resolve(storedFilename).normalize();
+
+        Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+
+        DocumentUpload doc = new DocumentUpload();
+        doc.setClaim(claim);
+        doc.setMember(claim.getMember());
+        doc.setOriginalFilename(originalFilename);
+        doc.setStoredFilename(storedFilename);
+        doc.setFilePath(targetPath.toString());
+        doc.setContentType(file.getContentType());
+        doc.setSizeBytes(file.getSize());
+        doc.setDocumentType("CLAIM_BULLETIN");
+
+        documentUploadRepository.save(doc);
+    }
+
+    private String getExtension(String filename) {
+        int dotIndex = filename.lastIndexOf(".");
+        if (dotIndex == -1) {
+            return "";
+        }
+
+        return filename.substring(dotIndex).toLowerCase(Locale.ROOT);
     }
 
 }

@@ -1,7 +1,9 @@
 package pi.db.piversionbd.entities.pre;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
+import org.hibernate.annotations.CreationTimestamp;
 import pi.db.piversionbd.entities.groups.Member;
 import pi.db.piversionbd.entities.score.Claim;
 
@@ -16,27 +18,41 @@ public class DocumentUpload {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne
-    @JoinColumn(name = "pre_registration_id")
-    private PreRegistration preRegistration;
-
-    @ManyToOne
+    /*
+     * Membre propriétaire du document.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "member_id")
+    @JsonIgnore
     private Member member;
 
-    @ManyToOne
+    /*
+     * Pré-inscription liée au document.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "pre_registration_id")
+    @JsonIgnore
+    private PreRegistration preRegistration;
+
+    /*
+     * Claim lié au bulletin.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "claim_id")
+    @JsonIgnore
     private Claim claim;
 
-    @Column(name = "fraud_detection_score")
-    private Float fraudDetectionScore;
+    /*
+     * Champs anciens utilisés par PreRegistrationServiceImpl.
+     */
+    @Column(name = "file_name")
+    private String fileName;
 
-    @Column(name = "document_type")
-    private String documentType;
+    @Column(name = "file_type")
+    private String fileType;
 
-    // Optional: store file path on disk for reference / download
-    @Column(name = "file_path")
-    private String filePath;
+    @Column(name = "file_url", length = 1000)
+    private String fileUrl;
 
     @Column(name = "uploaded_at")
     private LocalDateTime uploadedAt;
@@ -48,7 +64,35 @@ public class DocumentUpload {
     @Column(name = "extracted_text")
     private String extractedText;
 
-    @Column(name = "analysis_summary", length = 512)
+    @Lob
+    @Column(name = "analysis_summary")
     private String analysisSummary;
-}
 
+    @Column(name = "fraud_detection_score")
+    private Float fraudDetectionScore;
+
+    /*
+     * Nouveaux champs pour bulletin claim.
+     */
+    @Column(name = "original_filename")
+    private String originalFilename;
+
+    @Column(name = "stored_filename")
+    private String storedFilename;
+
+    @Column(name = "file_path", length = 1000)
+    private String filePath;
+
+    @Column(name = "content_type")
+    private String contentType;
+
+    @Column(name = "size_bytes")
+    private Long sizeBytes;
+
+    @Column(name = "document_type")
+    private String documentType;
+
+    @CreationTimestamp
+    @Column(name = "created_at", updatable = false)
+    private LocalDateTime createdAt;
+}

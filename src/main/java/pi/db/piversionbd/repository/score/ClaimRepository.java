@@ -32,4 +32,5 @@ public interface ClaimRepository extends JpaRepository<Claim, Long> {
     @EntityGraph(attributePaths = {"member", "group", "claimScoring"})
     @Query("select c from Claim c where c.id = :id")
     Optional<Claim> findDetailsById(@Param("id") Long id);
+    long countByMember_Id(Long memberId);
 }

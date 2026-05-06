@@ -24,7 +24,10 @@ import pi.db.piversionbd.service.hedera.HederaClaimService;
 import pi.db.piversionbd.service.score.ClaimService;
 
 import java.math.BigDecimal;
+import org.springframework.http.MediaType;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 @RestController
 @RequestMapping("/api/claims")
 @RequiredArgsConstructor
@@ -294,5 +297,47 @@ public class ClaimController {
         public void setAmountApproved(BigDecimal amountApproved) {
             this.amountApproved = amountApproved;
         }
+    }
+    @PostMapping(value = "/with-bulletin", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ClaimResponse> createWithBulletin(
+            Authentication auth,
+            @RequestParam(required = false) Long memberId,
+            @RequestParam Long groupId,
+            @RequestParam(required = false) String claimNumber,
+            @RequestParam BigDecimal amountRequested,
+            @RequestPart("bulletin") MultipartFile bulletin
+    ) throws IOException {
+
+        ClaimCreateRequest req = new ClaimCreateRequest();
+        req.memberId = memberId;
+        req.groupId = groupId;
+        req.claimNumber = claimNumber;
+        req.amountRequested = amountRequested;
+
+        if (currentMemberResolver.isAdmin(auth)) {
+            if (req.memberId == null) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "memberId is required for admin-created claims."
+                );
+            }
+        } else {
+            long me = currentMemberResolver.requireMemberId(auth);
+
+            if (req.memberId != null && !req.memberId.equals(me)) {
+                throw new ResponseStatusException(
+                        HttpStatus.FORBIDDEN,
+                        "memberId must match the logged-in member."
+                );
+            }
+
+            req.memberId = me;
+        }
+
+        Claim created = claimService.createWithBulletin(req, bulletin);
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(claimService.toResponse(created));
     }
 }
