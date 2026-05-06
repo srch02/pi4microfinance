@@ -56,7 +56,8 @@ public class SecurityConfig {
                                 "/api/claims/test-hedera/**",
                                 "/recaptcha-test.html",
                                 "/swagger-ui/**",
-                                "/v3/api-docs/**"
+                                "/v3/api-docs/**",
+                                "/uploads/**"
                         ).permitAll()
                         // Public registration/member-creation entrypoints
                         .requestMatchers(HttpMethod.POST, "/api/members").permitAll()

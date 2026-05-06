@@ -20,10 +20,11 @@ import pi.db.piversionbd.repository.groups.MemberRepository;
 import pi.db.piversionbd.repository.groups.MembershipRepository;
 import pi.db.piversionbd.repository.groups.PaymentRepository;
 import pi.db.piversionbd.repository.pre.PreRegistrationRepository;
-import pi.db.piversionbd.service.hedera.HederaContractService;
-import pi.db.piversionbd.service.hedera.SolidariHealthContractService;
+import pi.db.piversionbd.repository.admin.AdminUserRepository;
 import pi.db.piversionbd.service.score.AdherenceTrackingService;
+import pi.db.piversionbd.service.hedera.HederaContractService;
 
+import pi.db.piversionbd.service.hedera.SolidariHealthContractService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -51,6 +52,7 @@ public class MemberServiceImp implements IMemberService {
     private final AdherenceTrackingService adherenceTrackingService;
     private final HederaContractService hederaContractService;
     private final SolidariHealthContractService solidariHealthContractService;
+    private final AdminUserRepository adminUserRepository;
 
     @Override
     public List<Member> getAllMembers() {
@@ -159,6 +161,17 @@ public class MemberServiceImp implements IMemberService {
         }
         Member saved = memberRepository.save(member);
         createInitialAdherenceEvent(saved, initialAdherence);
+
+        // Auto-link: if an AdminUser with the same email exists and is not yet linked, link it now
+        if (saved.getEmail() != null && !saved.getEmail().isBlank()) {
+            adminUserRepository.findByEmail(saved.getEmail()).ifPresent(adminUser -> {
+                if (adminUser.getMember() == null) {
+                    adminUser.setMember(saved);
+                    adminUserRepository.save(adminUser);
+                    log.info("Auto-linked AdminUser '{}' to new Member id={}", adminUser.getUsername(), saved.getId());
+                }
+            });
+        }
         
         // Provision Hedera asynchronously to avoid blocking the HTTP request and causing timeouts
         CompletableFuture.runAsync(() -> {

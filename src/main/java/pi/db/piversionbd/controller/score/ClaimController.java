@@ -298,6 +298,41 @@ public class ClaimController {
             this.amountApproved = amountApproved;
         }
     }
+    @GetMapping("/{id}/documents")
+    @Operation(summary = "List documents attached to a claim (admin)")
+    public ResponseEntity<java.util.List<java.util.Map<String, Object>>> getClaimDocuments(
+            Authentication auth,
+            @PathVariable Long id
+    ) {
+        requireAdmin(auth);
+        var docs = claimService.getDocumentsByClaim(id);
+        var result = docs.stream().map(doc -> {
+            java.util.Map<String, Object> map = new java.util.LinkedHashMap<>();
+            map.put("id", doc.getId());
+            map.put("originalFilename", doc.getOriginalFilename() != null ? doc.getOriginalFilename() : doc.getFileName());
+            map.put("contentType", doc.getContentType() != null ? doc.getContentType() : doc.getFileType());
+            map.put("sizeBytes", doc.getSizeBytes());
+            map.put("documentType", doc.getDocumentType());
+            map.put("fraudDetectionScore", doc.getFraudDetectionScore());
+            map.put("createdAt", doc.getCreatedAt());
+            // Build accessible URL from storedFilename
+            String url = null;
+            if (doc.getStoredFilename() != null) {
+                url = "/uploads/claim-bulletins/" + doc.getStoredFilename();
+            } else if (doc.getFileUrl() != null) {
+                url = doc.getFileUrl();
+            } else if (doc.getFilePath() != null) {
+                // Convert local path to URL
+                String fp = doc.getFilePath().replace("\\", "/");
+                int idx = fp.indexOf("uploads/");
+                if (idx >= 0) url = "/" + fp.substring(idx);
+            }
+            map.put("fileUrl", url);
+            return map;
+        }).collect(java.util.stream.Collectors.toList());
+        return ResponseEntity.ok(result);
+    }
+
     @PostMapping(value = "/with-bulletin", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ClaimResponse> createWithBulletin(
             Authentication auth,

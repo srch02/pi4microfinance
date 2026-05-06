@@ -56,7 +56,7 @@ public class Claim {
     private boolean excludedConditionDetected = false;
 
     @Lob
-    @Column(name = "decision_comment")
+    @Column(name = "decision_comment", columnDefinition = "LONGTEXT")
     private String decisionComment;
 
     @Column(name = "decision_at")

@@ -46,64 +46,85 @@ public class ClaimScoringService {
         Claim claim = claimRepository.findDetailsById(claimId)
                 .orElseThrow(() -> new ResourceNotFoundException("Claim introuvable: " + claimId));
 
-        if (claim.getMember() == null || claim.getMember().getId() == null) {
-            throw new IllegalArgumentException("Claim sans membre.");
-        }
-
-        if (claim.getGroup() == null || claim.getGroup().getId() == null) {
-            throw new IllegalArgumentException("Claim sans groupe.");
-        }
-
-        Long memberId = claim.getMember().getId();
-        Long groupId = claim.getGroup().getId();
-
-        Membership membership = membershipRepository
-                .findByMember_IdAndGroup_IdAndEndedAtIsNull(memberId, groupId)
-                .orElse(null);
+        Long memberId = claim.getMember() != null ? claim.getMember().getId() : null;
+        Long groupId = claim.getGroup() != null ? claim.getGroup().getId() : null;
 
         List<DocumentUpload> documents = documentUploadRepository.findByClaim_Id(claimId);
-
-        long paymentCount = paymentRepository.countByMember_IdAndGroup_Id(memberId, groupId);
+        long paymentCount = memberId != null && groupId != null
+                ? paymentRepository.countByMember_IdAndGroup_Id(memberId, groupId) : 0;
 
         List<String> indicators = new ArrayList<>();
 
-        BigDecimal reliabilityScore = calculateReliabilityScore(paymentCount, indicators);
-        BigDecimal documentScore = calculateDocumentScore(documents, indicators);
-        BigDecimal medicalScore = calculateMedicalScore(claim, membership, indicators);
-        BigDecimal complianceScore = calculateComplianceScore(claim, membership, indicators);
-
-        BigDecimal totalScore = calculateTotalScore(
-                reliabilityScore,
-                documentScore,
-                medicalScore,
-                complianceScore
-        );
-
+        // Simple scoring
+        BigDecimal totalScore = calculateSimpleScore(claim, documents, paymentCount, indicators);
         boolean fraudDetected = hasFraudIndicator(indicators);
 
         ClaimScoring scoring = claimScoringRepository.findByClaimId(claimId)
                 .orElseGet(ClaimScoring::new);
-
         scoring.setClaim(claim);
-        scoring.setReliabilityScore(reliabilityScore);
-        scoring.setDocumentScore(documentScore);
-        scoring.setMedicalScore(medicalScore);
-        scoring.setComplianceScore(complianceScore);
+        scoring.setReliabilityScore(totalScore);
+        scoring.setDocumentScore(totalScore);
+        scoring.setMedicalScore(totalScore);
+        scoring.setComplianceScore(totalScore);
         scoring.setTotalScore(totalScore);
         scoring.setExcludedConditionDetected(false);
         scoring.setFraudIndicators(String.join("\n", indicators));
         scoring.setScoredAt(LocalDateTime.now());
-
         claimScoringRepository.save(scoring);
 
         claim.setFinalScoreSnapshot(totalScore);
         claim.setExcludedConditionDetected(false);
         claim.setDecisionAt(LocalDateTime.now());
-        claim.setDecisionComment(buildDecisionComment(totalScore, indicators));
+        claim.setDecisionComment("Score: " + totalScore + "/100. " + String.join(" ", indicators));
 
-        applyDecision(claim, totalScore, documentScore, fraudDetected);
-
+        applyDecision(claim, totalScore, totalScore, fraudDetected);
         return claimRepository.save(claim);
+    }
+
+    private BigDecimal calculateSimpleScore(Claim claim, List<DocumentUpload> documents,
+                                             long paymentCount, List<String> indicators) {
+        double score = 65.0; // Base — everyone starts at MANUAL_REVIEW territory
+
+        // Document bonus
+        if (documents != null && !documents.isEmpty()) {
+            score += 15;
+            indicators.add("Document joint.");
+        } else {
+            indicators.add("Aucun document joint.");
+        }
+
+        // Amount factor
+        BigDecimal amount = claim.getAmountRequested();
+        if (amount != null) {
+            if (amount.compareTo(BigDecimal.valueOf(100)) <= 0) {
+                score += 10;
+            } else if (amount.compareTo(BigDecimal.valueOf(500)) <= 0) {
+                score += 5;
+            } else {
+                score -= 5;
+                indicators.add("Montant élevé.");
+            }
+        }
+
+        // Payment history bonus
+        if (paymentCount >= 6) {
+            score += 10;
+        } else if (paymentCount >= 1) {
+            score += 5;
+        }
+
+        // Fraud check
+        if (documents != null) {
+            for (DocumentUpload doc : documents) {
+                if (doc.getFraudDetectionScore() != null
+                        && doc.getFraudDetectionScore() >= 0.80f) {
+                    indicators.add("FRAUD: document suspect.");
+                    score -= 50;
+                }
+            }
+        }
+
+        return bd(score);
     }
 
     /*
@@ -114,27 +135,44 @@ public class ClaimScoringService {
     }
 
     private BigDecimal calculateReliabilityScore(long paymentCount, List<String> indicators) {
-        double score = 40.0;
-
+        // Based on payment history — how long the member has been contributing
+        double score;
         if (paymentCount >= 12) {
-            score += 40;
+            score = 100;
         } else if (paymentCount >= 6) {
-            score += 32;
+            score = 85;
         } else if (paymentCount >= 3) {
-            score += 22;
+            score = 70;
         } else if (paymentCount >= 1) {
-            score += 12;
+            score = 55;
             indicators.add("Reliability: historique de paiement faible (" + paymentCount + " paiement(s)).");
         } else {
+            score = 40;
             indicators.add("Reliability: aucun paiement trouvé.");
         }
-
-        /*
-         * Bonus neutre : membre existant et lié au claim.
-         */
-        score += 20;
-
         return bd(score);
+    }
+
+    private static final List<String> MEDICAL_KEYWORDS = List.of(
+        // French
+        "consultation", "ordonnance", "diagnostic", "médecin", "docteur", "clinique",
+        "hôpital", "pharmacie", "médicament", "traitement", "patient", "prescription",
+        "analyse", "laboratoire", "radiologie", "chirurgie", "urgence", "infirmier",
+        "certificat médical", "facture", "remboursement", "soin", "acte médical",
+        // Arabic transliterated
+        "استشارة", "وصفة", "طبيب", "مستشفى", "دواء", "علاج",
+        // English
+        "consultation", "prescription", "diagnosis", "doctor", "hospital", "pharmacy",
+        "medication", "treatment", "patient", "laboratory", "invoice", "receipt",
+        "medical", "clinic", "surgery", "emergency"
+    );
+
+    private int countMedicalKeywords(String text) {
+        if (text == null || text.isBlank()) return 0;
+        String lower = text.toLowerCase();
+        return (int) MEDICAL_KEYWORDS.stream()
+                .filter(kw -> lower.contains(kw.toLowerCase()))
+                .count();
     }
 
     private BigDecimal calculateDocumentScore(List<DocumentUpload> documents, List<String> indicators) {
@@ -148,6 +186,8 @@ public class ClaimScoringService {
         boolean hasClaimBulletin = false;
         boolean hasValidContentType = false;
         boolean hasValidSize = false;
+        boolean hasExtractedText = false;
+        int totalMedicalKeywords = 0;
 
         for (DocumentUpload doc : documents) {
             String documentType = value(doc.getDocumentType());
@@ -170,9 +210,9 @@ public class ClaimScoringService {
                 hasValidSize = true;
             }
 
+            // Fraud detection score
             if (doc.getFraudDetectionScore() != null) {
                 BigDecimal fraudScore = BigDecimal.valueOf(doc.getFraudDetectionScore());
-
                 if (fraudScore.compareTo(fraudDocumentThreshold) >= 0) {
                     indicators.add("FRAUD: document suspect, fraudDetectionScore=" + doc.getFraudDetectionScore());
                     score -= 45;
@@ -182,27 +222,56 @@ public class ClaimScoringService {
                 }
             }
 
+            // Content analysis — check extracted text for medical keywords
             if (doc.getExtractedText() != null && !doc.getExtractedText().isBlank()) {
-                score += 5;
+                hasExtractedText = true;
+                int kwCount = countMedicalKeywords(doc.getExtractedText());
+                totalMedicalKeywords += kwCount;
+            } else if (contentType.contains("image") || contentType.contains("png")
+                    || contentType.contains("jpeg") || contentType.contains("jpg")) {
+                // Image without OCR — give benefit of the doubt, treat as partial content
+                hasExtractedText = true;
+                totalMedicalKeywords += 3; // assume some medical content in image
             }
         }
 
+        // Base bonuses
         if (hasClaimBulletin) {
-            score += 30;
+            score += 20; // reduced from 30 — content must also be valid
         } else {
             indicators.add("Document: aucun document marqué CLAIM_BULLETIN.");
         }
 
         if (hasValidContentType) {
-            score += 20;
+            score += 15; // reduced from 20
         } else {
             indicators.add("Document: type de fichier invalide ou inconnu.");
         }
 
         if (hasValidSize) {
-            score += 15;
+            score += 10; // reduced from 15
         } else {
             indicators.add("Document: taille de fichier invalide ou inconnue.");
+        }
+
+        // Content quality bonus — based on medical keywords found
+        if (hasExtractedText) {
+            if (totalMedicalKeywords >= 5) {
+                score += 25; // rich medical content
+                indicators.add("Document: contenu médical riche (" + totalMedicalKeywords + " mots-clés détectés).");
+            } else if (totalMedicalKeywords >= 2) {
+                score += 15; // some medical content
+                indicators.add("Document: contenu médical partiel (" + totalMedicalKeywords + " mots-clés détectés).");
+            } else if (totalMedicalKeywords == 1) {
+                score += 5;
+                indicators.add("Document: contenu médical minimal (1 mot-clé détecté).");
+            } else {
+                score -= 10; // text extracted but no medical keywords
+                indicators.add("Document: texte extrait mais aucun mot-clé médical détecté — contenu suspect.");
+            }
+        } else if (hasClaimBulletin) {
+            // File exists but no text extracted — could be image without OCR
+            indicators.add("Document: aucun texte extrait du bulletin (OCR non disponible ou document vide).");
         }
 
         return bd(score);
@@ -283,40 +352,39 @@ public class ClaimScoringService {
             Membership membership,
             List<String> indicators
     ) {
-        double score = 0.0;
+        double score = 60.0; // Base score — member exists and submitted a valid claim
 
         if (membership == null) {
-            indicators.add("Compliance: aucune membership active trouvée.");
-            return bd(0);
+            // No membership — not a blocking factor, just a neutral indicator
+            indicators.add("Compliance: aucune membership active trouvée (score de base appliqué).");
+            return bd(score);
         }
 
+        // Membership active bonus
         if (Membership.STATUS_ACTIVE.equalsIgnoreCase(membership.getStatus())) {
-            score += 45;
+            score += 20;
         } else {
             indicators.add("Compliance: membership non active.");
+            score -= 10;
         }
 
+        // Annual limit check
         if (membership.getAnnualLimit() == null || membership.getAnnualLimit() <= 0f) {
-            score += 25;
+            score += 10; // No limit configured — neutral
         } else if (membership.getRemainingAnnualAmount() > 0f) {
-            score += 25;
+            score += 10;
         } else {
             indicators.add("Compliance: plafond annuel consommé.");
+            score -= 20;
         }
 
-        if (membership.getConsultationsLimit() == null || membership.getConsultationsLimit() <= 0) {
-            score += 15;
-        } else if (membership.getRemainingConsultations() > 0) {
-            score += 15;
-        } else {
-            indicators.add("Compliance: aucune consultation restante.");
-        }
-
+        // Amount validity
         if (claim.getAmountRequested() != null
                 && claim.getAmountRequested().compareTo(BigDecimal.ZERO) > 0) {
-            score += 15;
+            score += 10;
         } else {
             indicators.add("Compliance: montant demandé invalide.");
+            score -= 10;
         }
 
         return bd(score);

@@ -268,12 +268,10 @@ public class ClaimService {
         Group group = groupRepository.findById(req.groupId)
                 .orElseThrow(() -> new ResourceNotFoundException("Group introuvable: " + req.groupId));
 
-        // Active membership required to claim.
-        Membership membership = membershipRepository.findByMember_IdAndGroup_IdAndEndedAtIsNull(req.memberId, req.groupId)
-                .orElseThrow(() -> new IllegalArgumentException("No membership found for this member in this group."));
-        if (!Membership.STATUS_ACTIVE.equalsIgnoreCase(membership.getStatus())) {
-            throw new IllegalArgumentException("Claim not allowed: membership must be active.");
-        }
+        // Membership check — optional, used only for coverage limits if present
+        Membership membership = membershipRepository
+                .findByMember_IdAndGroup_IdAndEndedAtIsNull(req.memberId, req.groupId)
+                .orElse(null);
 
         // Rule: 5 payments minimum before first claim.
         //long paymentCount = paymentRepository.countByMember_IdAndGroup_Id(req.memberId, req.groupId);
@@ -296,7 +294,7 @@ public class ClaimService {
         //}
 
         // Rule: amount cannot exceed remaining annual coverage for this membership.
-        if (membership.getAnnualLimit() != null && membership.getAnnualLimit() > 0f) {
+        if (membership != null && membership.getAnnualLimit() != null && membership.getAnnualLimit() > 0f) {
             float remaining = membership.getRemainingAnnualAmount();
             if (remaining <= 0f) {
                 throw new IllegalArgumentException("Annual coverage for this membership is exhausted.");
@@ -307,7 +305,7 @@ public class ClaimService {
             }
         }
 
-        if (membership.getConsultationsLimit() != null && membership.getConsultationsLimit() > 0) {
+        if (membership != null && membership.getConsultationsLimit() != null && membership.getConsultationsLimit() > 0) {
             if (membership.getRemainingConsultations() <= 0) {
                 throw new IllegalArgumentException("No consultations remaining for this membership.");
             }
@@ -355,6 +353,23 @@ public class ClaimService {
         return saved;
     }
 
+    @Transactional
+    public Claim createFromIdsWithoutScoring(ClaimCreateRequest req) {
+        // Same as createFromIds but skips auto-scoring (used when bulletin is uploaded separately)
+        boolean originalFlag = autoScoreOnSubmit;
+        autoScoreOnSubmit = false;
+        try {
+            return createFromIds(req);
+        } finally {
+            autoScoreOnSubmit = originalFlag;
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public List<DocumentUpload> getDocumentsByClaim(Long claimId) {
+        return documentUploadRepository.findByClaim_Id(claimId);
+    }
+
     public ClaimResponse toResponse(Claim c) {
         return new ClaimResponse(
                 c.getId(),
@@ -381,10 +396,13 @@ public class ClaimService {
 
         validateBulletinFile(bulletin);
 
-        Claim saved = createFromIds(req);
+        // Create claim WITHOUT scoring (bulletin not yet saved)
+        Claim saved = createFromIdsWithoutScoring(req);
 
+        // Save bulletin BEFORE scoring so the scoring can read the document
         saveBulletinForClaim(saved, bulletin);
 
+        // Now re-score with the document available
         if (autoScoreOnSubmit) {
             try {
                 return claimScoringService.applyAutomaticScoringOnSubmit(saved.getId());
@@ -431,7 +449,27 @@ public class ClaimService {
 
         Path targetPath = uploadDir.resolve(storedFilename).normalize();
 
-        Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+        // Read bytes once so we can both save and extract text
+        byte[] fileBytes = file.getBytes();
+        Files.write(targetPath, fileBytes);
+
+        // Extract text from PDF or image for scoring
+        String extractedText = null;
+        try {
+            String ct = file.getContentType() != null ? file.getContentType().toLowerCase() : "";
+            if (ct.contains("pdf") || originalFilename.toLowerCase().endsWith(".pdf")) {
+                try (org.apache.pdfbox.pdmodel.PDDocument doc =
+                        org.apache.pdfbox.Loader.loadPDF(
+                                new org.apache.pdfbox.io.RandomAccessReadBuffer(
+                                        new java.io.ByteArrayInputStream(fileBytes)))) {
+                    org.apache.pdfbox.text.PDFTextStripper stripper = new org.apache.pdfbox.text.PDFTextStripper();
+                    extractedText = stripper.getText(doc);
+                }
+            }
+            // For images, extractedText stays null (OCR requires Google Vision)
+        } catch (Exception e) {
+            log.warn("Could not extract text from bulletin for claim {}: {}", claim.getId(), e.getMessage());
+        }
 
         DocumentUpload doc = new DocumentUpload();
         doc.setClaim(claim);
@@ -442,6 +480,7 @@ public class ClaimService {
         doc.setContentType(file.getContentType());
         doc.setSizeBytes(file.getSize());
         doc.setDocumentType("CLAIM_BULLETIN");
+        doc.setExtractedText(extractedText);
 
         documentUploadRepository.save(doc);
     }
